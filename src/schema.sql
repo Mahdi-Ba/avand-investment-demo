@@ -1,4 +1,6 @@
 CREATE TABLE IF NOT EXISTS wallets (id text PRIMARY KEY);
+-- Serialize schema upgrades with wallet operations before touching ledger tables.
+LOCK TABLE wallets IN ACCESS EXCLUSIVE MODE;
 INSERT INTO wallets VALUES ('demo') ON CONFLICT DO NOTHING;
 CREATE TABLE IF NOT EXISTS quotes (
  id uuid PRIMARY KEY, price bigint NOT NULL CHECK(price>0), expires_at timestamptz NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
@@ -102,3 +104,92 @@ DO $$ BEGIN
 END $$;
 CREATE INDEX IF NOT EXISTS order_history_cursor ON orders(created_at DESC,id DESC);
 ALTER TABLE gateway_transactions ADD COLUMN IF NOT EXISTS statement_hidden boolean NOT NULL DEFAULT false;
+
+
+-- Synchronous wallet projection. Ledger entries remain the accounting source of truth.
+ALTER TABLE wallets ADD COLUMN IF NOT EXISTS available_rials bigint NOT NULL DEFAULT 0;
+ALTER TABLE wallets ADD COLUMN IF NOT EXISTS reserved_rials bigint NOT NULL DEFAULT 0;
+ALTER TABLE wallets ADD COLUMN IF NOT EXISTS available_gold_ug bigint NOT NULL DEFAULT 0;
+ALTER TABLE wallets ADD COLUMN IF NOT EXISTS reserved_gold_ug bigint NOT NULL DEFAULT 0;
+DO $$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM integration_bootstrap WHERE id='wallet-balance-projection-v1') THEN
+  UPDATE wallets w SET
+   available_rials=coalesce((SELECT sum(amount) FROM entries WHERE account='user:'||w.id AND asset='IRR'),0),
+   reserved_rials=coalesce((SELECT sum(amount) FROM entries WHERE account='user:'||w.id||':reserved' AND asset='IRR'),0),
+   available_gold_ug=coalesce((SELECT sum(amount) FROM entries WHERE account='user:'||w.id AND asset='GOLD_UG'),0),
+   reserved_gold_ug=coalesce((SELECT sum(amount) FROM entries WHERE account='user:'||w.id||':reserved' AND asset='GOLD_UG'),0);
+  IF EXISTS(SELECT 1 FROM wallets WHERE least(available_rials,reserved_rials,available_gold_ug,reserved_gold_ug)<0) THEN
+   RAISE EXCEPTION 'Cannot initialize wallet projection from negative ledger balances';
+  END IF;
+  INSERT INTO integration_bootstrap VALUES('wallet-balance-projection-v1');
+ END IF;
+END $$;
+CREATE OR REPLACE FUNCTION project_wallet_entry() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE wallet_key text; is_reserved boolean;
+BEGIN
+ IF left(NEW.account,5)<>'user:' THEN RETURN NEW; END IF;
+ wallet_key:=substring(NEW.account from 6);
+ is_reserved:=right(wallet_key,9)=':reserved';
+ IF is_reserved THEN wallet_key:=left(wallet_key,length(wallet_key)-9); END IF;
+ UPDATE wallets SET
+  available_rials=available_rials+CASE WHEN NOT is_reserved AND NEW.asset='IRR' THEN NEW.amount ELSE 0 END,
+  reserved_rials=reserved_rials+CASE WHEN is_reserved AND NEW.asset='IRR' THEN NEW.amount ELSE 0 END,
+  available_gold_ug=available_gold_ug+CASE WHEN NOT is_reserved AND NEW.asset='GOLD_UG' THEN NEW.amount ELSE 0 END,
+  reserved_gold_ug=reserved_gold_ug+CASE WHEN is_reserved AND NEW.asset='GOLD_UG' THEN NEW.amount ELSE 0 END
+ WHERE id=wallet_key;
+ IF NOT FOUND THEN RAISE EXCEPTION 'Unknown wallet account: %',NEW.account; END IF;
+ RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS entries_wallet_projection ON entries;
+CREATE TRIGGER entries_wallet_projection AFTER INSERT ON entries FOR EACH ROW EXECUTE FUNCTION project_wallet_entry();
+
+-- Prevent application SQL from editing projected money independently of an entry.
+-- Owner/superuser DDL can bypass triggers and is outside this demo's access boundary.
+CREATE OR REPLACE FUNCTION guard_wallet_projection() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF position(':' in NEW.id)>0 THEN RAISE EXCEPTION 'Wallet ids cannot contain colon'; END IF;
+ IF TG_OP='INSERT' THEN
+  IF NEW.available_rials<>0 OR NEW.reserved_rials<>0 OR NEW.available_gold_ug<>0 OR NEW.reserved_gold_ug<>0 THEN
+   RAISE EXCEPTION 'Wallet balances must start at zero';
+  END IF;
+ ELSIF NEW.id IS DISTINCT FROM OLD.id THEN RAISE EXCEPTION 'Wallet id is immutable';
+ ELSIF pg_trigger_depth()=1 AND
+  ROW(NEW.available_rials,NEW.reserved_rials,NEW.available_gold_ug,NEW.reserved_gold_ug) IS DISTINCT FROM
+  ROW(OLD.available_rials,OLD.reserved_rials,OLD.available_gold_ug,OLD.reserved_gold_ug) THEN
+  RAISE EXCEPTION 'Wallet balances are maintained by ledger entries';
+ END IF;
+ RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS wallets_projection_guard ON wallets;
+CREATE TRIGGER wallets_projection_guard BEFORE INSERT OR UPDATE ON wallets FOR EACH ROW EXECUTE FUNCTION guard_wallet_projection();
+CREATE OR REPLACE FUNCTION check_wallet_nonnegative() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF EXISTS(SELECT 1 FROM wallets WHERE id=NEW.id AND least(available_rials,reserved_rials,available_gold_ug,reserved_gold_ug)<0) THEN
+  RAISE EXCEPTION 'Negative wallet balance';
+ END IF;
+ RETURN NULL;
+END $$;
+DROP TRIGGER IF EXISTS wallets_nonnegative ON wallets;
+CREATE CONSTRAINT TRIGGER wallets_nonnegative AFTER INSERT OR UPDATE ON wallets DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION check_wallet_nonnegative();
+
+-- TRUNCATE is only for isolated tests/local resets; keep that reset atomic too.
+CREATE OR REPLACE FUNCTION reset_wallet_projection() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ UPDATE wallets SET available_rials=0,reserved_rials=0,available_gold_ug=0,reserved_gold_ug=0;
+ RETURN NULL;
+END $$;
+DROP TRIGGER IF EXISTS entries_wallet_reset ON entries;
+CREATE TRIGGER entries_wallet_reset AFTER TRUNCATE ON entries FOR EACH STATEMENT EXECUTE FUNCTION reset_wallet_projection();
+
+-- Used by audit/support and tests, never by the normal balance-read path.
+CREATE OR REPLACE VIEW wallet_balance_drift AS
+ SELECT w.id,v.asset,v.account,v.projected,coalesce(sum(e.amount),0) AS ledger
+ FROM wallets w CROSS JOIN LATERAL (VALUES
+  ('IRR','user:'||w.id,w.available_rials),
+  ('IRR','user:'||w.id||':reserved',w.reserved_rials),
+  ('GOLD_UG','user:'||w.id,w.available_gold_ug),
+  ('GOLD_UG','user:'||w.id||':reserved',w.reserved_gold_ug)
+ ) AS v(asset,account,projected)
+ LEFT JOIN entries e ON e.account=v.account AND e.asset=v.asset
+ GROUP BY w.id,v.asset,v.account,v.projected
+ HAVING v.projected<>coalesce(sum(e.amount),0);

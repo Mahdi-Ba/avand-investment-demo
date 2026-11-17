@@ -228,7 +228,10 @@ export function app() {
         "SELECT journal_id,asset FROM entries GROUP BY journal_id,asset HAVING sum(amount)<>0",
       )
     ).rows;
+    const drift = (await pool.query("SELECT * FROM wallet_balance_drift")).rows;
     return {
+      walletBalancesMatchLedger: drift.length === 0,
+      walletDrift: drift,
       balanced: invalid.length === 0 && totals.every((x) => x.total === "0"),
       totals,
       invalid,

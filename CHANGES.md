@@ -96,3 +96,12 @@ Expanded architecture covers accounting accounts, refund/correction workflow, sa
 Architecture now includes the candidate-confirmed eight-person team leadership, banking/lending and telecom/billing projects, domestic and international integrations, and monitoring practice. Recommendations for this product are distinguished from past implementation claims; confidential transaction volumes are omitted.
 
 Added a dependency-free Persian in-app walkthrough with 15 steps, section highlighting, automatic scrolling, previous/next/close controls and keyboard support. A collapsed demo-clock panel opens for its explanation and returns to its original state. The walkthrough performs no API writes. Browser verification traversed all 15 steps and checked previous, close, restart and panel restoration. JavaScript syntax and whitespace checks passed; financial code is unchanged.
+
+
+## 9. Synchronous wallet balances
+
+Added four bigint balance columns to wallets for available/reserved rials and gold. An entry-insert trigger updates them in the same database transaction as the immutable ledger. Balance reads and financial availability checks now use the wallet row; existing wallet locks serialize competing spends. Deferred nonnegative validation and a guard against direct balance edits provide additional database checks. No asynchronous cache or message delivery is involved in spend authorization.
+
+An additive, serialized migration backfills existing ledger balances exactly once; repeat startup preserves data and does not conceal privileged corruption. A drift-audit view compares each wallet bucket with the ledger and is exposed by the support invariant endpoint. Production scheduling/alert delivery for this audit remains operational work, and database-owner DDL can bypass trigger protections.
+
+Validation: 67 tests pass. Six dedicated tests cover atomic rollback, invalid/negative postings, forbidden direct updates, concurrent purchases, legacy-schema backfill and repeat migration, and privileged drift detection/reset. Existing financial tests additionally assert zero wallet/ledger drift. No production throughput benchmark is claimed.

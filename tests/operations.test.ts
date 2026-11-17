@@ -44,6 +44,9 @@ beforeEach(async () => {
   refundBreaker.close();
 });
 afterEach(async () => {
+  expect((await pool.query("SELECT * FROM wallet_balance_drift")).rows).toEqual(
+    [],
+  );
   expect(
     (
       await pool.query(

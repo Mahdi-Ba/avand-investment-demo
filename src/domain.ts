@@ -793,17 +793,16 @@ export async function reconcile(graceSeconds = 120) {
   });
 }
 export async function balances() {
-  return tx(async (c) => {
-    await c.query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
-    return {
-      rials: (await balance(c, "user:demo", "IRR")).toString(),
-      goldUg: (await balance(c, "user:demo", "GOLD_UG")).toString(),
-      reservedRials: (await balance(c, "user:demo:reserved", "IRR")).toString(),
-      reservedGoldUg: (
-        await balance(c, "user:demo:reserved", "GOLD_UG")
-      ).toString(),
-    };
-  });
+  const r = await pool.query(
+    'SELECT available_rials AS rials,available_gold_ug AS "goldUg",reserved_rials AS "reservedRials",reserved_gold_ug AS "reservedGoldUg" FROM wallets WHERE id=\'demo\'',
+  );
+  if (!r.rowCount) throw Error("Wallet not found");
+  return r.rows[0] as {
+    rials: string;
+    goldUg: string;
+    reservedRials: string;
+    reservedGoldUg: string;
+  };
 }
 export const messages: Record<string, string> = {
   refund_pending:

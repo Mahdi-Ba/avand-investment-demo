@@ -15,7 +15,7 @@
 1. Why does an unavailable gateway not imply a failed charge? Show verification_failed and refund_pending.
 2. What stops two devices spending the same balance? Identify the wallet row lock, transaction and counterparty entries.
 3. What happens after commit but before RabbitMQ ack? Show an idempotent replay and the unique financial journal.
-4. Why is a cached balance unnecessary here? Explain the account index and where performance would first be measured.
+4. Why was a synchronous wallet projection added? Show the entry trigger, transaction rollback, wallet lock, initial backfill and drift audit. Explain why an asynchronously updated cache is unsafe for spend decisions.
 5. Why does a 15-minute price gap not dead-letter a valid order? Distinguish an expected wait from an unexpected error.
 6. What is the exact definition of a day and an opening? Use Asia/Tehran and the boundary tests, not the laptop's timezone.
 7. Is completed proof of physical gold? No: the demo has independent settlement records; real inventory limits and a custodian agreement are launch gates.

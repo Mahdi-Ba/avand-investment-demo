@@ -30,6 +30,18 @@ export async function journal(
       );
 }
 export async function balance(c: PoolClient, account: string, asset: string) {
+  if (account === "user:demo" || account === "user:demo:reserved") {
+    const reserved = account.endsWith(":reserved");
+    if (asset !== "IRR" && asset !== "GOLD_UG") throw Error("Unknown asset");
+    const column =
+      (reserved ? "reserved_" : "available_") +
+      (asset === "IRR" ? "rials" : "gold_ug");
+    const r = await c.query(
+      `SELECT ${column}::text AS value FROM wallets WHERE id='demo'`,
+    );
+    if (!r.rowCount) throw Error("Wallet not found");
+    return BigInt(r.rows[0].value);
+  }
   const r = await c.query(
     "SELECT coalesce(sum(amount),0)::text AS value FROM entries WHERE account=$1 AND asset=$2",
     [account, asset],
