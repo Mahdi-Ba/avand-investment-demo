@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>آوند | اجرای سناریوهای مالی</title>
+    <link rel="stylesheet" href="/style.css" />
+    <style>
+      main {
+        padding-top: 20px;
+        max-width: 1400px;
+      }
+      .intro {
+        padding: 0 0 16px;
+      }
+      h1 {
+        font-size: 28px;
+      }
+      .demo-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+      }
+      .scenario {
+        padding: 10px 14px;
+        border-bottom: 1px solid #d5ddcf;
+        display: flex;
+        gap: 12px;
+        align-items: center;
+      }
+      .scenario b {
+        width: 28px;
+        color: #88702b;
+      }
+      .scenario span {
+        flex: 1;
+      }
+      .result {
+        font-size: 11px;
+        color: #738375;
+      }
+      .passed {
+        color: #176843;
+      }
+      .failed {
+        color: #a03828;
+      }
+      #trace {
+        max-height: 460px;
+        min-height: 360px;
+      }
+      #summary {
+        padding: 12px;
+        background: #f3efdc;
+        margin: 14px 0;
+      }
+      .panel {
+        padding: 18px;
+      }
+      header {
+        min-height: 65px;
+      }
+      .subtle {
+        margin: 8px 0;
+      }
+      @media (max-width: 700px) {
+        .demo-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <a class="brand" href="/">آوند <span>AVAND / SANDBOX</span></a
+      ><a href="/">بازگشت به کیف پول و پشتیبانی</a
+      ><span class="badge">تمام پول‌ها و سرویس‌ها ساختگی‌اند</span>
+    </header>
+    <main>
+      <section class="intro">
+        <div class="eyebrow">دموی قابل تکرار / بدون پاک‌کردن داده‌ها</div>
+        <h1>هفت سناریو برای صحت پول</h1>
+        <p>
+          این اجرا هر هفت سناریو را امتحان می‌کند؛ هیچ موردی از برنامهٔ نمایش حذف
+          نشده است. ناموفق‌بودن هر مرحله صریح نمایش داده می‌شود.
+        </p>
+        <button id="run">شروع اجرای هفت سناریو</button>
+        <span id="timer" class="subtle">زمان اجرا: —</span>
+      </section>
+      <div id="summary" role="status" aria-live="polite">
+        آمادهٔ اجرا. سفارش‌های جدید آزمایشی ساخته می‌شوند و ساعت و تنظیمات سرویس
+        در پایان بازیابی می‌شوند.
+      </div>
+      <section class="demo-grid">
+        <article class="panel">
+          <h2>نتیجهٔ سناریوها</h2>
+          <div class="scenario">
+            <b>۱</b><span>callback تکراری؛ طلا فقط یک بار</span
+            ><strong id="s1" class="result">در انتظار</strong>
+          </div>
+          <div class="scenario">
+            <b>۲</b><span>۱۰۰ خرید هم‌زمان با یک کلید</span
+            ><strong id="s2" class="result">در انتظار</strong>
+          </div>
+          <div class="scenario">
+            <b>۳</b><span>فروش هم‌زمان از دو دستگاه</span
+            ><strong id="s3" class="result">در انتظار</strong>
+          </div>
+          <div class="scenario">
+            <b>۴</b><span>پرداخت پس از انقضای قیمت</span
+            ><strong id="s4" class="result">در انتظار</strong>
+          </div>
+          <div class="scenario">
+            <b>۵</b><span>کسر وجه بدون رسیدن callback</span
+            ><strong id="s5" class="result">در انتظار</strong>
+          </div>
+          <div class="scenario">
+            <b>۶</b><span>جمع صفر دفترکل برای هر دارایی</span
+            ><strong id="s6" class="result">در انتظار</strong>
+          </div>
+          <div class="scenario">
+            <b>۷</b><span>مغایرت درگاه و دفترکل در هر دو جهت</span
+            ><strong id="s7" class="result">در انتظار</strong>
+          </div>
+          <p class="subtle">
+            اجرای واقعی از API و worker همین برنامه استفاده می‌کند. موجودی منفی،
+            ثبت تکراری یا پاسخ نامشخص باعث شکست مرحله می‌شود.
+          </p>
+          <p id="balances" class="subtle"></p>
+        </article>
+        <article class="panel">
+          <h2>شواهد، سفارش‌ها و اسناد</h2>
+          <pre id="trace" dir="ltr">Press start to run the scenarios.</pre>
+          <p class="subtle">
+            هر شناسهٔ سفارش در پنل پشتیبانی قابل جست‌وجوست. سناریوی هفتم فقط
+            خروجی صورتحساب ماک را تغییر می‌دهد؛ سندهای مالی ویرایش نمی‌شوند.
+          </p>
+        </article>
+      </section>
+    </main>
+    <script type="module" src="/demo.js"></script>
+  </body>
+</html>

@@ -3,6 +3,9 @@ let lockedQuote = null,
   selected = null,
   currentPrice = 0n;
 let refreshing = false;
+let historyCursor = null,
+  historyNext = null,
+  historyStack = [];
 let market = null,
   clockOffset = 0;
 const clockNow = () =>
@@ -50,6 +53,7 @@ async function details(id) {
   $("details").textContent = JSON.stringify(o, null, 2);
   $("orderState").textContent = o.message;
   $("resolveVerification").hidden = o.status !== "verification_failed";
+  $("refundPayment").hidden = o.status !== "verification_failed";
   $("cancelOrder").hidden = !(
     o.execution_mode === "queued" &&
     [
@@ -97,7 +101,9 @@ async function refresh() {
   try {
     const [b, orders, p, s, m] = await Promise.all([
       api("/balances"),
-      api("/orders"),
+      api(
+        "/history?limit=25" + (historyCursor ? "&cursor=" + historyCursor : ""),
+      ),
       api("/price").catch(() => ({ outage: true })),
       api("/support"),
       api("/market"),
@@ -126,8 +132,13 @@ async function refresh() {
       p.outage || p.stale
         ? "قیمت در دسترس نیست"
         : number((BigInt(b.goldUg) * currentPrice) / 1000000n);
+    historyNext = orders.nextCursor;
+    $("historyPrev").disabled = historyStack.length === 0;
+    $("historyNext").disabled = !historyNext;
+    $("historyPage").textContent =
+      "صفحهٔ " + (historyStack.length + 1).toLocaleString("fa-IR");
     $("orders").replaceChildren();
-    for (const o of orders) {
+    for (const o of orders.items) {
       const tr = document.createElement("tr");
       for (const text of [
         o.id.slice(0, 8),
@@ -155,7 +166,7 @@ async function refresh() {
       tr.append(td);
       $("orders").append(tr);
     }
-    if (!orders.length) {
+    if (!orders.items.length) {
       const tr = document.createElement("tr"),
         td = document.createElement("td");
       td.colSpan = 6;
@@ -284,12 +295,21 @@ $("reconcile").onclick = () =>
     await api("/support/reconcile", {});
     notice("کار تطبیق در صف قرار گرفت.");
   });
-for (const id of ["priceOutage", "gatewayOutage"])
+for (const id of [
+  "priceOutage",
+  "gatewayOutage",
+  "custodianOutage",
+  "custodianMode",
+  "bankOutage",
+])
   $(id).onchange = () =>
     act(() =>
       api("/mock/settings", {
         priceOutage: $("priceOutage").checked,
         gatewayOutage: $("gatewayOutage").checked,
+        custodianOutage: $("custodianOutage").checked,
+        custodianMode: $("custodianMode").value,
+        bankOutage: $("bankOutage").checked,
       }),
     );
 setInterval(() => {
@@ -303,7 +323,26 @@ setInterval(() => {
       : "قیمت منقضی شد؛ برای معامله قیمت تازه بگیرید.";
   }
 }, 250);
+$("historyNext").onclick = () =>
+  act(async () => {
+    if (historyNext) {
+      historyStack.push(historyCursor);
+      historyCursor = historyNext;
+    }
+  });
+$("historyPrev").onclick = () =>
+  act(async () => {
+    if (historyStack.length) historyCursor = historyStack.pop();
+  });
+$("refundPayment").onclick = () =>
+  act(async () => {
+    await api("/support/orders/" + selected + "/refund", {});
+    notice("بازپرداخت بانکی در صف قرار گرفت؛ این عملیات شارژ کیف پول نیست.");
+  });
 const settings = await api("/mock/settings");
+$("custodianOutage").checked = settings.custodian_outage;
+$("custodianMode").value = settings.custodian_mode;
+$("bankOutage").checked = settings.bank_outage;
 $("priceOutage").checked = settings.price_outage;
 $("gatewayOutage").checked = settings.gateway_outage;
 await refresh();

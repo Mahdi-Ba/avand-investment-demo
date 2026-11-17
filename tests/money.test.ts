@@ -39,10 +39,10 @@ beforeAll(async () => {
 });
 beforeEach(async () => {
   await pool.query(
-    "TRUNCATE events,outbox,entries,journals,gateway_transactions,orders,quotes,reconciliation_reports,daily_limits,opening_prices,price_interruptions RESTART IDENTITY CASCADE",
+    "TRUNCATE events,outbox,entries,journals,gateway_transactions,orders,quotes,reconciliation_reports,daily_limits,opening_prices,price_interruptions,scheduled_runs RESTART IDENTITY CASCADE",
   );
   await pool.query(
-    "UPDATE mock_settings SET price_outage=false,gateway_outage=false,price=100000000,price_epoch='2026-11-17T06:00:00Z',clock_override='2026-11-17T06:00:00Z',price_pause_started_at=NULL,price_pause_until=NULL,price_outage_started_at=NULL,price_resumed_at=NULL WHERE id=1",
+    "UPDATE mock_settings SET custodian_outage=false,custodian_mode='normal',bank_outage=false,price_outage=false,gateway_outage=false,price=100000000,price_epoch='2026-11-17T06:00:00Z',clock_override='2026-11-17T06:00:00Z',price_pause_started_at=NULL,price_pause_until=NULL,price_outage_started_at=NULL,price_resumed_at=NULL WHERE id=1",
   );
   priceBreaker.close();
 });
@@ -164,7 +164,10 @@ describe("Seven required money scenarios (real PostgreSQL)", () => {
       ).rows[0].n,
     ).toBe(0);
     const job = (
-      await pool.query("SELECT * FROM outbox WHERE order_id=$1", [o.id])
+      await pool.query(
+        "SELECT * FROM outbox WHERE order_id=$1 AND type='verify'",
+        [o.id],
+      )
     ).rows[0];
     expect(job.type).toBe("verify");
     expect(new Date(job.available_at).getTime()).toBeGreaterThan(
@@ -394,7 +397,12 @@ describe("Wallet funding and purchases", () => {
       ).rows,
     ).toEqual([]);
     expect(
-      (await pool.query("SELECT * FROM outbox WHERE order_id=$1", [o.id])).rows,
+      (
+        await pool.query(
+          "SELECT * FROM outbox WHERE order_id=$1 AND type='verify'",
+          [o.id],
+        )
+      ).rows,
     ).toEqual([]);
     const conflict = await api.inject({
       method: "POST",

@@ -1,3 +1,9 @@
+import {
+  settleCustodian,
+  settleRefund,
+  scheduleReconciliation,
+} from "./operations.js";
+import { externalCircuits } from "./external.js";
 import amqp from "amqplib";
 import { randomUUID } from "node:crypto";
 import { circuits } from "./providers.js";
@@ -35,11 +41,12 @@ async function publish() {
     if (Date.now() - heartbeatAt > 5000) {
       await pool.query(
         "INSERT INTO worker_status(id,circuits) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET circuits=excluded.circuits,last_seen=now()",
-        [workerId, JSON.stringify(circuits())],
+        [workerId, JSON.stringify({ ...circuits(), ...externalCircuits() })],
       );
       heartbeatAt = Date.now();
     }
     await scheduleQueued();
+    await scheduleReconciliation();
     await tx(async (c) => {
       // Uncompleted jobs are republished after a lease, including broker loss. Duplicates are safe.
       const jobs = await c.query(
@@ -84,6 +91,9 @@ await ch.consume(
         if (job.type === "verify") done = await verify(job.order_id);
         else if (job.type === "withdraw") await settleWithdrawal(job.order_id);
         else if (job.type === "reconcile") await reconcile();
+        else if (job.type === "custodian_settle")
+          await settleCustodian(job.order_id);
+        else if (job.type === "refund") await settleRefund(job.order_id);
         else if (job.type === "execute_queued")
           done = await executeQueued(job.order_id);
         else throw Error("Unknown job type");

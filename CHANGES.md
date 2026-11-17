@@ -77,4 +77,15 @@ No commit was squashed. Compare `git diff v1..HEAD` and run `git show dd04d7b` f
 
 Additional coverage includes exact-cap acceptance, separate buy/sell counters, Tehran midnight/week boundaries, weekend closure, both reservation assets, late workers, repeated execution, 15-minute/multiple gaps, recovery between cadence ticks, gateway payment-time transitions and cancellation before verification. A real RabbitMQ worker automatically processes the market queue at opening and survives message replay without duplicate financial posting.
 
-Also verified: TypeScript, browser-JavaScript syntax, full Docker Compose startup, successful HTTP market smoke, browser queue/cancel flow, restored real clock, no reconciliation mismatches, and zero ledger sum independently for IRR and GOLD_UG. No benchmark, production deployment, security certification or final submission video is claimed.
+Also verified: TypeScript, browser-JavaScript syntax, full Docker Compose startup, successful HTTP market smoke, browser queue/cancel flow, restored real clock, no reconciliation mismatches, and zero ledger sum independently for IRR and GOLD_UG. No benchmark, production deployment or security certification is claimed.
+
+
+## 7. Operational completion
+
+Added independent mock custodian, bank and refund receipts with circuit breakers, idempotent settlement and outbox retries. Refunds of charged but unverified payments pass through suspense and never expose spendable wallet funds. Reconciliation compares gateway, bank and custody records independently; a daily durable schedule runs from 02:00 Tehran. Legacy seeded receipts are explicitly marked, rather than presented as independent historical evidence.
+
+History now uses a bounded keyset cursor and the interface supports page navigation. A repeatable seven-scenario demo exercises duplicate callbacks, 100 identical concurrent requests, overselling protection, expired payment quotes, missed callbacks, ledger invariants and both directions of statement discrepancies. The final recorded run passed all seven in 24 seconds; the screen recording is about 49 seconds including its start and end.
+
+Validation: **61 tests pass**, TypeScript passes, and the browser demo completed successfully. New tests cover refund races/outages, independent settlement mismatches and recovery, bank retry, equal-timestamp pagination beyond 100 orders, daily scheduler races, statement omission and actual ledger invariants.
+
+Expanded architecture covers accounting accounts, refund/correction workflow, sample reconciliation closure, delayed fund settlement, card payment/liquidity examples and a week-by-week delivery plan. Production authorization, physical treasury inventory, bank settlement files and dual-approval discrepancy resolution remain explicit launch work. Personal work-history examples must come from the candidate; no past employment experience is invented.

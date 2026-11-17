@@ -29,10 +29,10 @@ beforeAll(async () => {
     await readFile(new URL("../src/schema.sql", import.meta.url), "utf8"),
   );
   await pool.query(
-    "TRUNCATE events,outbox,entries,journals,gateway_transactions,orders,quotes,reconciliation_reports,daily_limits,opening_prices,price_interruptions RESTART IDENTITY CASCADE",
+    "TRUNCATE events,outbox,entries,journals,gateway_transactions,orders,quotes,reconciliation_reports,daily_limits,opening_prices,price_interruptions,scheduled_runs RESTART IDENTITY CASCADE",
   );
   await pool.query(
-    "UPDATE mock_settings SET price_outage=false,gateway_outage=false,price=100000000,price_epoch='2026-11-17T06:00:00Z',clock_override='2026-11-17T06:00:00Z',price_pause_started_at=NULL,price_pause_until=NULL,price_outage_started_at=NULL,price_resumed_at=NULL WHERE id=1",
+    "UPDATE mock_settings SET custodian_outage=false,custodian_mode='normal',bank_outage=false,price_outage=false,gateway_outage=false,price=100000000,price_epoch='2026-11-17T06:00:00Z',clock_override='2026-11-17T06:00:00Z',price_pause_started_at=NULL,price_pause_until=NULL,price_outage_started_at=NULL,price_resumed_at=NULL WHERE id=1",
   );
   worker = spawn(process.execPath, ["--import", "tsx", "src/worker.ts"], {
     env: { ...process.env, AMQP_QUEUE: queue },
@@ -72,8 +72,12 @@ it("real RabbitMQ worker recovers missing callback and replay after publish neve
         .rows[0].status === "completed",
   );
   expect((await balances()).goldUg).toBe("990000");
-  const j = (await pool.query("SELECT * FROM outbox WHERE order_id=$1", [o.id]))
-    .rows[0];
+  const j = (
+    await pool.query(
+      "SELECT * FROM outbox WHERE order_id=$1 AND type='verify'",
+      [o.id],
+    )
+  ).rows[0];
   await until(async () =>
     Boolean(
       (await pool.query("SELECT completed_at FROM outbox WHERE id=$1", [j.id]))
@@ -119,7 +123,10 @@ it("provider failure exhausts retries into DLQ and support replay safely recover
   );
   expect(await balances()).toEqual(before);
   const dead = (
-    await pool.query("SELECT * FROM outbox WHERE order_id=$1", [o.id])
+    await pool.query(
+      "SELECT * FROM outbox WHERE order_id=$1 AND type='verify'",
+      [o.id],
+    )
   ).rows[0];
   expect(dead.dead).toBe(true);
   const conn = await amqp.connect(
@@ -169,7 +176,12 @@ it("async independent top-up completes through RabbitMQ, then wallet buy settles
     BigInt(buy.gold),
   );
   expect(
-    (await pool.query("SELECT * FROM outbox WHERE order_id=$1", [buy.id])).rows,
+    (
+      await pool.query(
+        "SELECT * FROM outbox WHERE order_id=$1 AND type='verify'",
+        [buy.id],
+      )
+    ).rows,
   ).toEqual([]);
 });
 it("async charged/verify-rejected top-up waits for explicit resolution without duplicate funds", async () => {

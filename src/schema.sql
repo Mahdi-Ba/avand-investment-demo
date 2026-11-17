@@ -79,3 +79,26 @@ CREATE TABLE IF NOT EXISTS price_interruptions (
  id uuid PRIMARY KEY, kind text NOT NULL CHECK(kind IN ('pause','outage')), started_at timestamptz NOT NULL, ends_at timestamptz,
  CHECK(ends_at IS NULL OR ends_at>=started_at)
 );
+
+-- Independent external-system mocks and additive operational delivery support.
+ALTER TABLE mock_settings ADD COLUMN IF NOT EXISTS custodian_outage boolean NOT NULL DEFAULT false;
+ALTER TABLE mock_settings ADD COLUMN IF NOT EXISTS custodian_mode text NOT NULL DEFAULT 'normal' CHECK(custodian_mode IN ('normal','missing','wrong_quantity'));
+ALTER TABLE mock_settings ADD COLUMN IF NOT EXISTS bank_outage boolean NOT NULL DEFAULT false;
+CREATE TABLE IF NOT EXISTS custodian_records(order_id uuid PRIMARY KEY REFERENCES orders,reference uuid NOT NULL UNIQUE,gold_delta bigint NOT NULL,source text NOT NULL DEFAULT 'mock_provider',created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS bank_records(order_id uuid PRIMARY KEY REFERENCES orders,reference uuid NOT NULL UNIQUE,amount bigint NOT NULL,source text NOT NULL DEFAULT 'mock_provider',created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS gateway_refunds(order_id uuid PRIMARY KEY REFERENCES orders,reference uuid NOT NULL UNIQUE,amount bigint NOT NULL,created_at timestamptz NOT NULL DEFAULT now());
+ALTER TABLE reconciliation_reports ADD COLUMN IF NOT EXISTS bank_mismatches jsonb NOT NULL DEFAULT '[]';
+ALTER TABLE reconciliation_reports ADD COLUMN IF NOT EXISTS custodian_mismatches jsonb NOT NULL DEFAULT '[]';
+CREATE TABLE IF NOT EXISTS scheduled_runs(task text NOT NULL,day date NOT NULL,created_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(task,day));
+CREATE TABLE IF NOT EXISTS integration_bootstrap(id text PRIMARY KEY);
+DO $$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM integration_bootstrap WHERE id='external-mock-baseline-v1') THEN
+  INSERT INTO custodian_records(order_id,reference,gold_delta,source)
+   SELECT j.order_id,gen_random_uuid(),-sum(e.amount)::bigint,'legacy_mock_seed' FROM journals j JOIN entries e ON e.journal_id=j.id WHERE e.account='custodian:inventory' AND j.order_id IS NOT NULL GROUP BY j.order_id ON CONFLICT DO NOTHING;
+  INSERT INTO bank_records(order_id,reference,amount,source)
+   SELECT j.order_id,gen_random_uuid(),sum(e.amount)::bigint,'legacy_mock_seed' FROM journals j JOIN entries e ON e.journal_id=j.id WHERE e.account='bank:settlement' AND j.order_id IS NOT NULL GROUP BY j.order_id ON CONFLICT DO NOTHING;
+  INSERT INTO integration_bootstrap VALUES('external-mock-baseline-v1');
+ END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS order_history_cursor ON orders(created_at DESC,id DESC);
+ALTER TABLE gateway_transactions ADD COLUMN IF NOT EXISTS statement_hidden boolean NOT NULL DEFAULT false;

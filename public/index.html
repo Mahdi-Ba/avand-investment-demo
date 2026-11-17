@@ -113,6 +113,9 @@
             «دیررس» را پس از پایان شمارش معکوس بزنید. وجه پرداخت دیررس به کیف
             پول می‌رود؛ برگشت بانکی نیست.
           </p>
+          <button id="refundPayment" class="secondary" hidden>
+            بازپرداخت وجه به مبدأ بانکی ماک
+          </button>
           <button id="resolveVerification" class="secondary" hidden>
             تأیید مجدد درگاه ماک / رفع مغایرت
           </button>
@@ -181,6 +184,11 @@
           </table>
         </div>
       </section>
+      <div class="support-tools">
+        <button id="historyPrev" class="secondary" disabled>صفحهٔ قبل</button
+        ><span id="historyPage">صفحهٔ ۱</span
+        ><button id="historyNext" class="secondary" disabled>صفحهٔ بعد</button>
+      </div>
       <section class="panel" id="support">
         <div class="section-label">فضای پشتیبانی / فقط دمو</div>
         <h2>هر تغییر، یک رد قابل پیگیری</h2>
@@ -196,6 +204,19 @@
           مدار API و snapshot مستقل هر worker نمایش داده می‌شوند؛ snapshot
           worker هر ۵ ثانیه تازه می‌شود.
         </p>
+        <div class="support-tools">
+          <label
+            ><input id="custodianOutage" type="checkbox" /> قطعی متولی
+            طلا</label
+          ><label for="custodianMode">رفتار متولی طلا</label
+          ><select id="custodianMode">
+            <option value="normal">ثبت عادی</option>
+            <option value="missing">ثبت گمشده</option>
+            <option value="wrong_quantity">مقدار اشتباه</option></select
+          ><label
+            ><input id="bankOutage" type="checkbox" /> قطعی بانک تسویه</label
+          ><a href="/demo.html">اجرای هفت سناریوی دمو</a>
+        </div>
         <details class="mock-market">
           <summary>کنترل ساعت و وقفهٔ قیمت در دمو</summary>
           <p class="subtle">

@@ -1,3 +1,5 @@
+import { requestRefund } from "./operations.js";
+import { externalCircuits } from "./external.js";
 import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
 import staticFiles from "@fastify/static";
@@ -111,6 +113,58 @@ export function app() {
       throw new Problem(400, "Invalid order kind");
     return place(req.body.kind, req.body, req.headers["idempotency-key"]);
   });
+  api.get<{ Querystring: { limit?: string; cursor?: string } }>(
+    "/api/history",
+    async (req) => {
+      const limit =
+        req.query.limit === undefined ? 25 : Number(req.query.limit);
+      if (!Number.isInteger(limit) || limit < 1 || limit > 100)
+        throw new Problem(400, "limit must be between 1 and 100");
+      let cursor: string[] | null = null;
+      if (req.query.cursor) {
+        try {
+          cursor = JSON.parse(
+            Buffer.from(req.query.cursor, "base64url").toString(),
+          );
+          if (
+            !Array.isArray(cursor) ||
+            cursor.length !== 2 ||
+            typeof cursor[0] !== "string" ||
+            !Number.isFinite(Date.parse(cursor[0]))
+          )
+            throw Error();
+          uuid(cursor[1]);
+        } catch {
+          throw new Problem(400, "Invalid history cursor");
+        }
+      }
+      const rows = (
+        await pool.query(
+          "SELECT *,created_at::text AS cursor_created_at FROM orders WHERE wallet_id='demo' AND ($1::timestamptz IS NULL OR (created_at,id)<($1::timestamptz,$2::uuid)) ORDER BY created_at DESC,id DESC LIMIT $3",
+          [cursor?.[0] ?? null, cursor?.[1] ?? null, limit + 1],
+        )
+      ).rows;
+      const more = rows.length > limit,
+        visible = rows.slice(0, limit),
+        last = visible.at(-1);
+      const nextCursor = more
+        ? Buffer.from(
+            JSON.stringify([last.cursor_created_at, last.id]),
+          ).toString("base64url")
+        : null;
+      return {
+        items: visible.map(({ cursor_created_at, ...o }) => ({
+          ...o,
+          message: messages[o.status],
+        })),
+        nextCursor,
+      };
+    },
+  );
+  api.post<{ Params: { id: string } }>(
+    "/api/support/orders/:id/refund",
+    async (req) => requestRefund(req.params.id),
+  );
   api.get("/api/orders", async () => {
     const r = await pool.query(
       "SELECT * FROM orders ORDER BY created_at DESC LIMIT 100",
@@ -163,6 +217,36 @@ export function app() {
       return { accepted: true };
     },
   );
+  api.get("/api/support/invariants", async () => {
+    const totals = (
+      await pool.query(
+        "SELECT asset,sum(amount)::text AS total FROM entries GROUP BY asset",
+      )
+    ).rows;
+    const invalid = (
+      await pool.query(
+        "SELECT journal_id,asset FROM entries GROUP BY journal_id,asset HAVING sum(amount)<>0",
+      )
+    ).rows;
+    return {
+      balanced: invalid.length === 0 && totals.every((x) => x.total === "0"),
+      totals,
+      invalid,
+    };
+  });
+  api.post<{ Params: { id: string }; Body: { hidden: boolean } }>(
+    "/api/mock/payments/:id/statement",
+    async (req) => {
+      if (typeof req.body?.hidden !== "boolean")
+        throw new Problem(400, "hidden must be boolean");
+      const r = await pool.query(
+        "UPDATE gateway_transactions SET statement_hidden=$2 WHERE order_id=$1 RETURNING order_id",
+        [uuid(req.params.id), req.body.hidden],
+      );
+      if (!r.rowCount) throw new Problem(404, "Payment not found");
+      return { ok: true };
+    },
+  );
   api.get("/api/support", async () => {
     const [reports, jobs, workers] = await Promise.all([
       pool.query(
@@ -176,7 +260,7 @@ export function app() {
       ),
     ]);
     return {
-      circuits: circuits(),
+      circuits: { ...circuits(), ...externalCircuits() },
       workers: workers.rows,
       latestReport: reports.rows[0] ?? null,
       jobs: jobs.rows,
@@ -202,39 +286,63 @@ export function app() {
     async () =>
       (await pool.query("SELECT * FROM mock_settings WHERE id=1")).rows[0],
   );
-  api.post<{ Body: { priceOutage: boolean; gatewayOutage: boolean } }>(
-    "/api/mock/settings",
-    async (req) => {
-      if (
-        typeof req.body?.priceOutage !== "boolean" ||
-        typeof req.body?.gatewayOutage !== "boolean"
-      )
-        throw new Problem(400, "Boolean outage flags required");
-      await tx(async (c) => {
-        const now = await businessNow(c);
-        const previous = (
-          await c.query(
-            "SELECT price_outage FROM mock_settings WHERE id=1 FOR UPDATE",
-          )
-        ).rows[0];
-        if (req.body.priceOutage && !previous.price_outage)
-          await c.query(
-            "INSERT INTO price_interruptions(id,kind,started_at) VALUES($1,'outage',$2)",
-            [randomUUID(), now],
-          );
-        if (!req.body.priceOutage && previous.price_outage)
-          await c.query(
-            "UPDATE price_interruptions SET ends_at=greatest(started_at,$1) WHERE kind='outage' AND ends_at IS NULL",
-            [now],
-          );
+  api.post<{
+    Body: {
+      priceOutage: boolean;
+      gatewayOutage: boolean;
+      custodianOutage?: boolean;
+      custodianMode?: string;
+      bankOutage?: boolean;
+    };
+  }>("/api/mock/settings", async (req) => {
+    if (
+      typeof req.body?.priceOutage !== "boolean" ||
+      typeof req.body?.gatewayOutage !== "boolean"
+    )
+      throw new Problem(400, "Boolean outage flags required");
+    if (
+      (req.body.custodianOutage !== undefined &&
+        typeof req.body.custodianOutage !== "boolean") ||
+      (req.body.bankOutage !== undefined &&
+        typeof req.body.bankOutage !== "boolean") ||
+      (req.body.custodianMode !== undefined &&
+        !["normal", "missing", "wrong_quantity"].includes(
+          req.body.custodianMode,
+        ))
+    )
+      throw new Problem(400, "Invalid external mock controls");
+    await tx(async (c) => {
+      await c.query(
+        "UPDATE mock_settings SET custodian_outage=coalesce($1,custodian_outage),custodian_mode=coalesce($2,custodian_mode),bank_outage=coalesce($3,bank_outage) WHERE id=1",
+        [
+          req.body.custodianOutage ?? null,
+          req.body.custodianMode ?? null,
+          req.body.bankOutage ?? null,
+        ],
+      );
+      const now = await businessNow(c);
+      const previous = (
         await c.query(
-          "UPDATE mock_settings SET price_outage_started_at=CASE WHEN $1 AND NOT price_outage THEN $3 ELSE price_outage_started_at END,price_resumed_at=CASE WHEN NOT $1 AND price_outage THEN $3 ELSE price_resumed_at END,price_outage=$1,gateway_outage=$2 WHERE id=1",
-          [req.body.priceOutage, req.body.gatewayOutage, now],
+          "SELECT price_outage FROM mock_settings WHERE id=1 FOR UPDATE",
+        )
+      ).rows[0];
+      if (req.body.priceOutage && !previous.price_outage)
+        await c.query(
+          "INSERT INTO price_interruptions(id,kind,started_at) VALUES($1,'outage',$2)",
+          [randomUUID(), now],
         );
-      });
-      return { ok: true };
-    },
-  );
+      if (!req.body.priceOutage && previous.price_outage)
+        await c.query(
+          "UPDATE price_interruptions SET ends_at=greatest(started_at,$1) WHERE kind='outage' AND ends_at IS NULL",
+          [now],
+        );
+      await c.query(
+        "UPDATE mock_settings SET price_outage_started_at=CASE WHEN $1 AND NOT price_outage THEN $3 ELSE price_outage_started_at END,price_resumed_at=CASE WHEN NOT $1 AND price_outage THEN $3 ELSE price_resumed_at END,price_outage=$1,gateway_outage=$2 WHERE id=1",
+        [req.body.priceOutage, req.body.gatewayOutage, now],
+      );
+    });
+    return { ok: true };
+  });
   return api;
 }
 if (process.argv[1] === fileURLToPath(import.meta.url))

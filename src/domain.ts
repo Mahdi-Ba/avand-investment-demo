@@ -3,6 +3,7 @@ import type { PoolClient } from "pg";
 import { pool, tx } from "./db.js";
 import { balance, journal, lockWallet } from "./ledger.js";
 import { priceBreaker, gatewayBreaker, openingPrice } from "./providers.js";
+import { bankBreaker } from "./external.js";
 import { businessNow, marketAt, reserveCap, releaseCap } from "./market.js";
 export class Problem extends Error {
   constructor(
@@ -305,6 +306,7 @@ async function executeSell(c: PoolClient, o: any, account = "user:demo") {
     ["user:demo", "IRR", amount],
     ["revenue:fees", "IRR", fee],
   ]);
+  await enqueue(c, o.id, "custodian_settle");
 }
 async function executeBuy(
   c: PoolClient,
@@ -325,6 +327,7 @@ async function executeBuy(
     ["custodian:inventory", "GOLD_UG", -gold],
     ["user:demo", "GOLD_UG", gold],
   ]);
+  await enqueue(c, o.id, "custodian_settle");
 }
 export function validSheba(s: string) {
   if (!/^IR\d{24}$/.test(s)) return false;
@@ -739,6 +742,10 @@ export async function executeQueued(id: string) {
   });
 }
 export async function settleWithdrawal(id: string) {
+  const candidate = (await pool.query("SELECT * FROM orders WHERE id=$1", [id]))
+    .rows[0];
+  if (!candidate || candidate.status !== "withdrawal_pending") return;
+  await bankBreaker.fire(id, candidate.amount);
   await tx(async (c) => {
     await lockWallet(c);
     const o = (
@@ -756,17 +763,30 @@ export async function settleWithdrawal(id: string) {
     await event(c, id, "mock_bank_settled");
   });
 }
-export async function reconcile() {
+export async function reconcile(graceSeconds = 120) {
   return tx(async (c) => {
     // One snapshot for both sides: avoid reports containing a half-observed commit.
     await c.query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
     const r = await c.query(
-      `WITH posted AS (SELECT j.order_id,-sum(e.amount)::bigint AS amount FROM journals j JOIN entries e ON e.journal_id=j.id WHERE j.purpose='topup' AND e.account='gateway:clearing' GROUP BY j.order_id), paid AS (SELECT order_id,amount FROM gateway_transactions WHERE status='paid') SELECT coalesce(p.order_id,l.order_id) AS order_id,p.amount::text AS gateway_amount,l.amount::text AS ledger_amount,CASE WHEN l.order_id IS NULL THEN 'gateway_only' WHEN p.order_id IS NULL THEN 'ledger_only' ELSE 'amount_mismatch' END AS type FROM paid p FULL OUTER JOIN posted l ON p.order_id=l.order_id WHERE p.order_id IS NULL OR l.order_id IS NULL OR p.amount<>l.amount`,
+      `WITH posted AS (SELECT j.order_id,-sum(e.amount)::bigint AS amount FROM journals j JOIN entries e ON e.journal_id=j.id WHERE e.account='gateway:clearing' GROUP BY j.order_id), paid AS (SELECT g.order_id,g.amount-coalesce(f.amount,0) AS amount FROM gateway_transactions g LEFT JOIN gateway_refunds f ON f.order_id=g.order_id WHERE g.status='paid' AND NOT g.statement_hidden) SELECT coalesce(p.order_id,l.order_id) AS order_id,p.amount::text AS gateway_amount,l.amount::text AS ledger_amount,CASE WHEN l.order_id IS NULL THEN 'gateway_only' WHEN p.order_id IS NULL THEN 'ledger_only' ELSE 'amount_mismatch' END AS type FROM paid p FULL OUTER JOIN posted l ON p.order_id=l.order_id WHERE p.order_id IS NULL OR l.order_id IS NULL OR p.amount<>l.amount`,
+    );
+    const custody = await c.query(
+      `WITH ledger AS (SELECT j.order_id,-sum(e.amount)::bigint AS amount,min(j.created_at) AS created_at FROM entries e JOIN journals j ON j.id=e.journal_id WHERE e.account='custodian:inventory' GROUP BY j.order_id) SELECT coalesce(l.order_id,x.order_id) AS order_id,l.amount::text AS ledger_amount,x.gold_delta::text AS external_amount,CASE WHEN l.order_id IS NULL THEN 'custodian_only' WHEN x.order_id IS NULL THEN 'ledger_only' ELSE 'quantity_mismatch' END AS type FROM ledger l FULL JOIN custodian_records x ON l.order_id=x.order_id WHERE (l.order_id IS NULL OR x.order_id IS NULL OR l.amount<>x.gold_delta) AND coalesce(l.created_at,x.created_at)<now()-$1*interval '1 second'`,
+      [graceSeconds],
+    );
+    const bank = await c.query(
+      `WITH ledger AS (SELECT j.order_id,sum(e.amount)::bigint AS amount,min(j.created_at) AS created_at FROM entries e JOIN journals j ON j.id=e.journal_id WHERE e.account='bank:settlement' GROUP BY j.order_id) SELECT coalesce(l.order_id,x.order_id) AS order_id,l.amount::text AS ledger_amount,x.amount::text AS external_amount,CASE WHEN l.order_id IS NULL THEN 'bank_only' WHEN x.order_id IS NULL THEN 'ledger_only' ELSE 'amount_mismatch' END AS type FROM ledger l FULL JOIN bank_records x ON l.order_id=x.order_id WHERE (l.order_id IS NULL OR x.order_id IS NULL OR l.amount<>x.amount) AND coalesce(l.created_at,x.created_at)<now()-$1*interval '1 second'`,
+      [graceSeconds],
     );
     const report = (
       await c.query(
-        "INSERT INTO reconciliation_reports(id,mismatches) VALUES($1,$2) RETURNING *",
-        [randomUUID(), JSON.stringify(r.rows)],
+        "INSERT INTO reconciliation_reports(id,mismatches,bank_mismatches,custodian_mismatches) VALUES($1,$2,$3,$4) RETURNING *",
+        [
+          randomUUID(),
+          JSON.stringify(r.rows),
+          JSON.stringify(bank.rows),
+          JSON.stringify(custody.rows),
+        ],
       )
     ).rows[0];
     return report;
@@ -786,6 +806,10 @@ export async function balances() {
   });
 }
 export const messages: Record<string, string> = {
+  refund_pending:
+    "وجه برای بازپرداخت بانکی رزرو شده؛ در انتظار پاسخ درگاه ماک هستیم.",
+  refunded:
+    "درگاه ماک وجه را به مبدأ بانکی بازگرداند؛ کیف پول یا طلایی بابت این پرداخت اضافه نشده است.",
   queued:
     "سفارش از سقف خارج ساعات بازار عبور کرده؛ دارایی رزرو شده و با اولین قیمت پس از بازشدن بازار اجرا می‌شود. تا پیش از اجرا می‌توانید لغو کنید.",
   cancelled:

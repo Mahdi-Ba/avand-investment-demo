@@ -58,10 +58,10 @@ beforeAll(async () => {
 });
 beforeEach(async () => {
   await pool.query(
-    "TRUNCATE events,outbox,entries,journals,gateway_transactions,orders,quotes,reconciliation_reports,daily_limits,opening_prices,price_interruptions RESTART IDENTITY CASCADE",
+    "TRUNCATE events,outbox,entries,journals,gateway_transactions,orders,quotes,reconciliation_reports,daily_limits,opening_prices,price_interruptions,scheduled_runs RESTART IDENTITY CASCADE",
   );
   await pool.query(
-    "UPDATE mock_settings SET clock_override=$1,price_epoch=$1,price=100000000,price_outage=false,gateway_outage=false,price_pause_started_at=NULL,price_pause_until=NULL,price_outage_started_at=NULL,price_resumed_at=NULL WHERE id=1",
+    "UPDATE mock_settings SET custodian_outage=false,custodian_mode='normal',bank_outage=false,clock_override=$1,price_epoch=$1,price=100000000,price_outage=false,gateway_outage=false,price_pause_started_at=NULL,price_pause_until=NULL,price_outage_started_at=NULL,price_resumed_at=NULL WHERE id=1",
     [OPEN],
   );
   priceBreaker.close();
