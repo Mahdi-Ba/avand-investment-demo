@@ -1,7 +1,11 @@
 import CircuitBreaker from "opossum";
 import { pool } from "./db.js";
 async function settings() {
-  return (await pool.query("SELECT * FROM mock_settings WHERE id=1")).rows[0];
+  return (
+    await pool.query(
+      "SELECT *,clock_timestamp() AS provider_now FROM mock_settings WHERE id=1",
+    )
+  ).rows[0];
 }
 const options = {
   timeout: 1500,
@@ -10,11 +14,29 @@ const options = {
   resetTimeout: 10000,
   rollingCountTimeout: 30000,
 };
+// A deterministic feed changes every 30s, using the shared DB clock and epoch.
+// No per-process timer: API instances agree and restarts preserve the feed phase.
+export function priceSnapshot(base: bigint, epoch: Date, now: Date) {
+  const slot = Math.max(
+    0,
+    Math.floor((now.getTime() - epoch.getTime()) / 30000),
+  );
+  const basisPoints = [0n, 25n, -15n, 40n, -25n, 10n];
+  const calculated =
+    (base * (10000n + basisPoints[slot % basisPoints.length])) / 10000n;
+  const publishedAt = new Date(epoch.getTime() + slot * 30000);
+  return {
+    price: (calculated > 0n ? calculated : 1n).toString(),
+    publishedAt: publishedAt.toISOString(),
+    nextUpdateAt: new Date(publishedAt.getTime() + 30000).toISOString(),
+    indicative: true,
+  };
+}
 export function makePriceBreaker() {
   return new CircuitBreaker(async () => {
     const s = await settings();
     if (s.price_outage) throw Error("Price provider unavailable");
-    return BigInt(s.price);
+    return priceSnapshot(BigInt(s.price), s.price_epoch, s.provider_now);
   }, options);
 }
 export const priceBreaker = makePriceBreaker();

@@ -4,7 +4,13 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import amqp from "amqplib";
 import { pool } from "../src/db.js";
-import { quote, place, simulate, balances } from "../src/domain.js";
+import {
+  quote,
+  place,
+  simulate,
+  balances,
+  resolveVerification,
+} from "../src/domain.js";
 let worker: ChildProcess;
 let output = "";
 const queue = "avand.test." + randomUUID();
@@ -26,7 +32,7 @@ beforeAll(async () => {
     "TRUNCATE events,outbox,entries,journals,gateway_transactions,orders,quotes,reconciliation_reports RESTART IDENTITY CASCADE",
   );
   await pool.query(
-    "UPDATE mock_settings SET price_outage=false,gateway_outage=false WHERE id=1",
+    "UPDATE mock_settings SET price_outage=false,gateway_outage=false,price=100000000,price_epoch=now() WHERE id=1",
   );
   worker = spawn(process.execPath, ["--import", "tsx", "src/worker.ts"], {
     env: { ...process.env, AMQP_QUEUE: queue },
@@ -137,5 +143,61 @@ it("provider failure exhausts retries into DLQ and support replay safely recover
   );
   expect(BigInt((await balances()).goldUg) - BigInt(before.goldUg)).toBe(
     99000n,
+  );
+});
+
+it("async independent top-up completes through RabbitMQ, then wallet buy settles without a payment job", async () => {
+  const before = await balances();
+  const t = await place("topup", { amount: "10000000" }, randomUUID());
+  await simulate(t.id, "duplicate");
+  await until(
+    async () =>
+      (await pool.query("SELECT status FROM orders WHERE id=$1", [t.id]))
+        .rows[0].status === "completed",
+  );
+  expect(BigInt((await balances()).rials) - BigInt(before.rials)).toBe(
+    10000000n,
+  );
+  const q = await quote(),
+    buy = await place(
+      "buy",
+      { amount: "10000000", quoteId: q.id, fundingSource: "wallet" },
+      randomUUID(),
+    );
+  expect(buy.status).toBe("completed");
+  expect(BigInt((await balances()).goldUg) - BigInt(before.goldUg)).toBe(
+    BigInt(buy.gold),
+  );
+  expect(
+    (await pool.query("SELECT * FROM outbox WHERE order_id=$1", [buy.id])).rows,
+  ).toEqual([]);
+});
+it("async charged/verify-rejected top-up waits for explicit resolution without duplicate funds", async () => {
+  const before = await balances();
+  const t = await place("topup", { amount: "1000000" }, randomUUID());
+  await simulate(t.id, "failed_verify");
+  await until(
+    async () =>
+      (await pool.query("SELECT status FROM orders WHERE id=$1", [t.id]))
+        .rows[0].status === "verification_failed",
+  );
+  expect(await balances()).toEqual(before);
+  expect(
+    (
+      await pool.query(
+        "SELECT status,verification_status FROM gateway_transactions WHERE order_id=$1",
+        [t.id],
+      )
+    ).rows[0],
+  ).toEqual({ status: "paid", verification_status: "rejected" });
+  await resolveVerification(t.id);
+  await until(
+    async () =>
+      (await pool.query("SELECT status FROM orders WHERE id=$1", [t.id]))
+        .rows[0].status === "completed",
+  );
+  await resolveVerification(t.id);
+  expect(BigInt((await balances()).rials) - BigInt(before.rials)).toBe(
+    1000000n,
   );
 });

@@ -39,6 +39,7 @@
       <p class="subtle">
         مبلغ رزروشده برای برداشت: <span id="reserved">۰</span> ریال
       </p>
+      <p class="subtle" id="priceFeed">قیمت ساختگی هر ۳۰ ثانیه تغییر می‌کند.</p>
       <section class="workspace" id="trade">
         <article class="panel">
           <div class="section-label">۰۱ / معامله</div>
@@ -57,7 +58,12 @@
               inputmode="numeric"
               pattern="[0-9]+"
               required
-            /><button>خرید طلا</button>
+            /><label for="fundingSource">پرداخت از</label>
+            <select id="fundingSource">
+              <option value="wallet">موجودی کیف پول</option>
+              <option value="gateway">درگاه ماک (خرید مستقیم)</option>
+            </select>
+            <button>خرید طلا</button>
           </form>
           <form id="sellForm">
             <label for="sellGrams">مقدار فروش به گرم · کارمزد ۱٪</label
@@ -73,8 +79,8 @@
           <div class="section-label">۰۲ / درگاه شبیه‌سازی‌شده</div>
           <h2>یک پرداخت، چند سناریو</h2>
           <p class="subtle">
-            ابتدا سفارش خرید بسازید؛ سپس نتیجهٔ پرداخت را انتخاب کنید. هر سفارش
-            فقط یک پرداخت آزمایشی دارد.
+            ابتدا درخواست شارژ یا خرید مستقیم با درگاه بسازید؛ سپس نتیجهٔ پرداخت
+            را انتخاب کنید. هر سفارش فقط یک پرداخت آزمایشی دارد.
           </p>
           <p id="selectedOrder" class="mono">سفارشی انتخاب نشده</p>
           <div class="scenarios">
@@ -87,19 +93,38 @@
             ><button data-mode="missing" class="secondary">
               موفق، بدون callback</button
             ><button data-mode="failed_verify" class="secondary">
-              verify ناموفق
+              کسر وجه، verify ناموفق
             </button>
           </div>
           <p class="subtle">
             «دیررس» را پس از پایان شمارش معکوس بزنید. وجه پرداخت دیررس به کیف
             پول می‌رود؛ برگشت بانکی نیست.
           </p>
+          <button id="resolveVerification" class="secondary" hidden>
+            تأیید مجدد درگاه ماک / رفع مغایرت
+          </button>
+          <p id="paymentState" class="subtle"></p>
           <div id="orderState" class="state">
             وضعیت سفارش اینجا نمایش داده می‌شود.
           </div>
         </article>
         <article class="panel">
-          <div class="section-label">۰۳ / برداشت</div>
+          <div class="section-label">۰۳ / کیف پول ریالی</div>
+          <h2>شارژ کیف پول</h2>
+          <form id="topupForm">
+            <label for="topupAmount">مبلغ شارژ به ریال · بدون کارمزد</label
+            ><input
+              id="topupAmount"
+              value="100000000"
+              inputmode="numeric"
+              pattern="[0-9]+"
+              required
+            /><button>شارژ از درگاه ماک</button>
+          </form>
+          <p class="subtle">
+            بعد از پرداخت و تأیید درگاه، مبلغ به موجودی قابل استفاده اضافه
+            می‌شود. سپس می‌توانید از کیف پول طلا بخرید.
+          </p>
           <h2>انتقال به شبا</h2>
           <p class="subtle">
             مبلغ ابتدا رزرو می‌شود و worker تسویهٔ بانک را شبیه‌سازی می‌کند.
@@ -152,8 +177,8 @@
           >
         </div>
         <p class="subtle">
-          Circuit Breaker پس از خطاهای متوالی باز می‌شود. وضعیت نمایش‌داده‌شده
-          متعلق به API است؛ مدار درگاه در worker مستقل است.
+          مدار API و snapshot مستقل هر worker نمایش داده می‌شوند؛ snapshot
+          worker هر ۵ ثانیه تازه می‌شود.
         </p>
         <div class="support-grid">
           <div>

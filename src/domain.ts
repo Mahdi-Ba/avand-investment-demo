@@ -57,20 +57,22 @@ export async function enqueue(
     [randomUUID(), id, type, delay],
   );
 }
-export async function quote() {
-  let price: bigint;
+export async function currentPrice() {
   try {
-    price = await priceBreaker.fire();
+    return await priceBreaker.fire();
   } catch {
     throw new Problem(
       503,
       "قیمت‌دهنده در دسترس نیست؛ کمی بعد دوباره تلاش کنید.",
     );
   }
+}
+export async function quote() {
+  const snapshot = await currentPrice();
   return (
     await pool.query(
-      "INSERT INTO quotes(id,price,expires_at) VALUES($1,$2,now()+interval '60 seconds') RETURNING *",
-      [randomUUID(), price.toString()],
+      "INSERT INTO quotes(id,price,provider_published_at,expires_at) VALUES($1,$2,$3,now()+interval '60 seconds') RETURNING *",
+      [randomUUID(), snapshot.price, snapshot.publishedAt],
     )
   ).rows[0];
 }
@@ -86,12 +88,13 @@ async function lockedQuote(c: PoolClient, id: string) {
   return q;
 }
 export async function place(
-  kind: "buy" | "sell" | "withdraw",
+  kind: "topup" | "buy" | "sell" | "withdraw",
   input: {
     amount?: unknown;
     gold?: unknown;
     quoteId?: unknown;
     sheba?: unknown;
+    fundingSource?: unknown;
   },
   key: unknown,
 ) {
@@ -101,7 +104,23 @@ export async function place(
     kind === "sell" ? input.gold : input.amount,
     kind === "sell" ? "gold" : "amount",
   );
-  const qid = kind === "withdraw" ? null : uuid(input.quoteId);
+  if (
+    input.fundingSource !== undefined &&
+    (kind !== "buy" ||
+      typeof input.fundingSource !== "string" ||
+      !["wallet", "gateway"].includes(input.fundingSource))
+  )
+    throw new Problem(
+      400,
+      "fundingSource is only valid for buys: wallet or gateway",
+    );
+  const fundingSource =
+    kind === "buy"
+      ? (input.fundingSource ?? "gateway")
+      : kind === "topup"
+        ? "gateway"
+        : "wallet";
+  const qid = kind === "buy" || kind === "sell" ? uuid(input.quoteId) : null;
   const sheba =
     kind === "withdraw"
       ? String(input.sheba ?? "")
@@ -112,7 +131,15 @@ export async function place(
     throw new Problem(400, "شماره شبا معتبر نیست.");
   if (kind === "withdraw" && !sheba) throw new Problem(400, "Sheba required");
   const hash = createHash("sha256")
-    .update(JSON.stringify([kind, n.toString(), qid, sheba]))
+    .update(
+      JSON.stringify([
+        kind,
+        n.toString(),
+        qid,
+        sheba,
+        ...(kind === "buy" && fundingSource === "wallet" ? ["wallet"] : []),
+      ]),
+    )
     .digest("hex");
   return tx(async (c) => {
     await lockWallet(c);
@@ -153,18 +180,21 @@ export async function place(
       if ((await balance(c, "user:demo", "GOLD_UG")) < gold)
         throw new Problem(409, "موجودی طلا کافی نیست.");
     }
-    if (kind === "withdraw" && (await balance(c, "user:demo", "IRR")) < amount)
+    if (
+      (kind === "withdraw" || (kind === "buy" && fundingSource === "wallet")) &&
+      (await balance(c, "user:demo", "IRR")) < amount
+    )
       throw new Problem(409, "موجودی ریالی کافی نیست.");
     const id = randomUUID(),
       status =
-        kind === "buy"
+        kind === "topup" || (kind === "buy" && fundingSource === "gateway")
           ? "awaiting_payment"
-          : kind === "sell"
+          : kind === "sell" || kind === "buy"
             ? "completed"
             : "withdrawal_pending";
     const order = (
       await c.query(
-        "INSERT INTO orders(id,wallet_id,kind,idempotency_key,request_hash,quote_id,amount,gold,fee,status,sheba) VALUES($1,'demo',$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *",
+        "INSERT INTO orders(id,wallet_id,kind,idempotency_key,request_hash,quote_id,amount,gold,fee,status,sheba,funding_source) VALUES($1,'demo',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *",
         [
           id,
           kind,
@@ -176,11 +206,17 @@ export async function place(
           fee.toString(),
           status,
           sheba,
+          fundingSource,
         ],
       )
     ).rows[0];
-    await event(c, id, "order_created", { kind, status });
-    if (kind === "buy") await enqueue(c, id, "verify", 5);
+    await event(c, id, "order_created", { kind, status, fundingSource });
+    if (kind === "topup" || (kind === "buy" && fundingSource === "gateway"))
+      await enqueue(c, id, "verify", 5);
+    if (kind === "buy" && fundingSource === "wallet") {
+      await executeBuy(c, order);
+      await event(c, id, "completed", { fundingSource });
+    }
     if (kind === "sell") {
       await journal(c, id, "sell", [
         ["user:demo", "GOLD_UG", -gold],
@@ -205,6 +241,25 @@ export async function place(
       )
     ).rows[0].response;
   });
+}
+async function executeBuy(
+  c: PoolClient,
+  o: { id: string; quote_id: string; gold: string; fee: string },
+) {
+  const gold = BigInt(o.gold),
+    fee = BigInt(o.fee);
+  // The last fractional microgram remains rial cash in the wallet, never silently disappears.
+  const p = (
+    await c.query("SELECT price FROM quotes WHERE id=$1", [o.quote_id])
+  ).rows[0];
+  const cost = (gold * BigInt(p.price) + 999999n) / 1000000n;
+  await journal(c, o.id, "buy", [
+    ["user:demo", "IRR", -(cost + fee)],
+    ["trading:liquidity", "IRR", cost],
+    ["revenue:fees", "IRR", fee],
+    ["custodian:inventory", "GOLD_UG", -gold],
+    ["user:demo", "GOLD_UG", gold],
+  ]);
 }
 export function validSheba(s: string) {
   if (!/^IR\d{24}$/.test(s)) return false;
@@ -241,7 +296,12 @@ export async function simulate(id: string, mode: string) {
     const o = (
       await c.query("SELECT * FROM orders WHERE id=$1 FOR UPDATE", [id])
     ).rows[0];
-    if (!o || o.kind !== "buy") throw new Problem(404, "Buy order not found");
+    if (
+      !o ||
+      !["buy", "topup"].includes(o.kind) ||
+      o.funding_source !== "gateway"
+    )
+      throw new Problem(404, "Gateway-funded order not found");
     const existing = (
       await c.query("SELECT * FROM gateway_transactions WHERE order_id=$1", [
         id,
@@ -252,10 +312,11 @@ export async function simulate(id: string, mode: string) {
         409,
         "Gateway payment already simulated; create another order",
       );
-    if (o.status !== "awaiting_payment")
+    if (!["awaiting_payment", "payment_pending"].includes(o.status))
       throw new Problem(409, "Order is final");
     if (
       mode === "late" &&
+      o.kind === "buy" &&
       (
         await c.query(
           "SELECT expires_at>clock_timestamp() AS valid FROM quotes WHERE id=$1",
@@ -268,13 +329,14 @@ export async function simulate(id: string, mode: string) {
         "برای پرداخت دیررس ابتدا منتظر پایان شمارش معکوس بمانید.",
       );
     await c.query(
-      "INSERT INTO gateway_transactions(order_id,reference,amount,status,mode,paid_at) VALUES($1,$2,$3,$4,$5,CASE WHEN $4='paid' THEN clock_timestamp() ELSE NULL END)",
+      "INSERT INTO gateway_transactions(order_id,reference,amount,status,mode,verification_status,paid_at) VALUES($1,$2,$3,$4,$5,$6,CASE WHEN $4='paid' THEN clock_timestamp() ELSE NULL END)",
       [
         id,
         randomUUID(),
         o.amount,
-        mode === "failure" || mode === "failed_verify" ? "failed" : "paid",
+        mode === "failure" ? "failed" : "paid",
         mode,
+        mode === "failed_verify" ? "rejected" : "verified",
       ],
     );
     await event(c, id, "mock_gateway", { mode });
@@ -283,6 +345,44 @@ export async function simulate(id: string, mode: string) {
     await callback(id);
     if (mode === "duplicate") await callback(id);
   }
+}
+export async function resolveVerification(id: string) {
+  uuid(id);
+  await tx(async (c) => {
+    await lockWallet(c);
+    const o = (
+      await c.query("SELECT * FROM orders WHERE id=$1 FOR UPDATE", [id])
+    ).rows[0];
+    if (!o) throw new Problem(404, "Order not found");
+    const payment = (
+      await c.query(
+        "SELECT * FROM gateway_transactions WHERE order_id=$1 FOR UPDATE",
+        [id],
+      )
+    ).rows[0];
+    if (
+      !payment ||
+      payment.mode !== "failed_verify" ||
+      payment.status !== "paid"
+    )
+      throw new Problem(409, "No charged payment with failed verification");
+    if (payment.verification_status === "verified") return;
+    if (
+      ![
+        "awaiting_payment",
+        "payment_pending",
+        "verification_failed",
+        "payment_review",
+      ].includes(o.status)
+    )
+      throw new Problem(409, "Order is final");
+    await c.query(
+      "UPDATE gateway_transactions SET verification_status='verified' WHERE order_id=$1",
+      [id],
+    );
+    await event(c, id, "mock_verification_resolved");
+    await enqueue(c, id, "verify");
+  });
 }
 export async function verify(id: string) {
   // Provider calls are outside the financial transaction; never hold a wallet lock across network I/O.
@@ -297,10 +397,14 @@ export async function verify(id: string) {
     ).rows[0];
     if (
       !o ||
-      o.kind !== "buy" ||
-      !["awaiting_payment", "payment_pending", "payment_review"].includes(
-        o.status,
-      )
+      !["buy", "topup"].includes(o.kind) ||
+      o.funding_source !== "gateway" ||
+      ![
+        "awaiting_payment",
+        "payment_pending",
+        "payment_review",
+        "verification_failed",
+      ].includes(o.status)
     )
       return true;
     if (!payment) {
@@ -334,28 +438,29 @@ export async function verify(id: string) {
     }
     if (BigInt(payment.amount) !== BigInt(o.amount))
       throw Error("Gateway amount mismatch: manual review required");
-    const amount = BigInt(o.amount),
-      gold = BigInt(o.gold),
-      fee = BigInt(o.fee);
+    if (payment.verification_status === "rejected") {
+      if (o.status !== "verification_failed") {
+        await c.query(
+          "UPDATE orders SET status='verification_failed',updated_at=now() WHERE id=$1",
+          [id],
+        );
+        await event(c, id, "verification_rejected", {
+          reference: payment.reference,
+          charged: true,
+        });
+      }
+      return true;
+    }
+    const amount = BigInt(o.amount);
     await journal(c, id, "topup", [
       ["gateway:clearing", "IRR", -amount],
       ["user:demo", "IRR", amount],
     ]);
     const late =
+      o.kind === "buy" &&
       new Date(payment.paid_at).getTime() > new Date(o.expires_at).getTime();
-    if (!late) {
-      // The last fractional microgram remains rial cash in the wallet, never silently disappears.
-      const p = (
-        await c.query("SELECT price FROM quotes WHERE id=$1", [o.quote_id])
-      ).rows[0];
-      const cost = (gold * BigInt(p.price) + 999999n) / 1000000n;
-      await journal(c, id, "buy", [
-        ["user:demo", "IRR", -(cost + fee)],
-        ["trading:liquidity", "IRR", cost],
-        ["revenue:fees", "IRR", fee],
-        ["custodian:inventory", "GOLD_UG", -gold],
-        ["user:demo", "GOLD_UG", gold],
-      ]);
+    if (o.kind === "buy" && !late) {
+      await executeBuy(c, o);
     }
     const status = late ? "credited_to_wallet" : "completed";
     await c.query("UPDATE orders SET status=$2,updated_at=now() WHERE id=$1", [
@@ -411,6 +516,8 @@ export async function balances() {
   });
 }
 export const messages: Record<string, string> = {
+  verification_failed:
+    "درگاه کسر وجه را ثبت کرده اما تأیید نهایی پرداخت ناموفق است؛ وجه یا طلا به موجودی اضافه نشده و سفارش در انتظار رفع مغایرت است.",
   payment_review:
     "بررسی خودکار پرداخت متوقف شده؛ پشتیبانی باید وضعیت درگاه را بررسی و پردازش را دوباره اجرا کند. وجه یا طلا دوباره ثبت نشده است.",
   awaiting_payment: "منتظر پرداخت شما هستیم.",

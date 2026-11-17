@@ -47,3 +47,11 @@ CREATE TABLE IF NOT EXISTS reconciliation_reports (id uuid PRIMARY KEY, mismatch
 
 CREATE TABLE IF NOT EXISTS idempotency_responses (order_id uuid PRIMARY KEY REFERENCES orders, response jsonb NOT NULL);
 CREATE TABLE IF NOT EXISTS worker_status (id text PRIMARY KEY, circuits jsonb NOT NULL, last_seen timestamptz NOT NULL DEFAULT now());
+
+-- Additive v1 MVP completion. Preserve all existing orders and ledger entries.
+ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_kind_check;
+ALTER TABLE orders ADD CONSTRAINT orders_kind_check CHECK(kind IN ('topup','buy','sell','withdraw'));
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS funding_source text NOT NULL DEFAULT 'gateway' CHECK(funding_source IN ('gateway','wallet'));
+ALTER TABLE gateway_transactions ADD COLUMN IF NOT EXISTS verification_status text NOT NULL DEFAULT 'verified' CHECK(verification_status IN ('verified','rejected'));
+ALTER TABLE quotes ADD COLUMN IF NOT EXISTS provider_published_at timestamptz;
+ALTER TABLE mock_settings ADD COLUMN IF NOT EXISTS price_epoch timestamptz NOT NULL DEFAULT now();

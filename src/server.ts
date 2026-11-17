@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 import { pool, tx } from "./db.js";
 import {
   quote,
+  currentPrice,
+  resolveVerification,
   place,
   simulate,
   callback,
@@ -33,24 +35,21 @@ export function app() {
   });
   api.get("/api/balances", balances);
   api.post("/api/quotes", quote);
-  api.get("/api/price", async () => {
-    const s = (
-      await pool.query(
-        "SELECT price,price_outage FROM mock_settings WHERE id=1",
-      )
-    ).rows[0];
-    return { price: s.price, outage: s.price_outage, indicative: true };
-  });
+  api.get("/api/price", currentPrice);
   api.post<{
     Body: {
-      kind: "buy" | "sell" | "withdraw";
+      kind: "topup" | "buy" | "sell" | "withdraw";
       amount?: string;
       gold?: string;
       quoteId?: string;
       sheba?: string;
+      fundingSource?: "wallet" | "gateway";
     };
   }>("/api/orders", async (req) => {
-    if (!req.body || !["buy", "sell", "withdraw"].includes(req.body.kind))
+    if (
+      !req.body ||
+      !["topup", "buy", "sell", "withdraw"].includes(req.body.kind)
+    )
       throw new Problem(400, "Invalid order kind");
     return place(req.body.kind, req.body, req.headers["idempotency-key"]);
   });
@@ -64,7 +63,7 @@ export function app() {
     const id = uuid(req.params.id),
       o = (await pool.query("SELECT * FROM orders WHERE id=$1", [id])).rows[0];
     if (!o) throw new Problem(404, "Order not found");
-    const [events, entries, jobs] = await Promise.all([
+    const [events, entries, jobs, payment] = await Promise.all([
       pool.query("SELECT * FROM events WHERE order_id=$1 ORDER BY id", [id]),
       pool.query(
         "SELECT e.*,j.purpose FROM entries e JOIN journals j ON e.journal_id=j.id WHERE j.order_id=$1 ORDER BY e.id",
@@ -74,6 +73,7 @@ export function app() {
         "SELECT * FROM outbox WHERE order_id=$1 ORDER BY available_at",
         [id],
       ),
+      pool.query("SELECT * FROM gateway_transactions WHERE order_id=$1", [id]),
     ]);
     return {
       ...o,
@@ -81,12 +81,20 @@ export function app() {
       events: events.rows,
       entries: entries.rows,
       jobs: jobs.rows,
+      payment: payment.rows[0] ?? null,
     };
   });
   api.post<{ Params: { id: string }; Body: { mode: string } }>(
     "/api/mock/payments/:id",
     async (req) => {
       await simulate(req.params.id, req.body?.mode);
+      return { accepted: true };
+    },
+  );
+  api.post<{ Params: { id: string } }>(
+    "/api/mock/payments/:id/resolve-verification",
+    async (req) => {
+      await resolveVerification(req.params.id);
       return { accepted: true };
     },
   );

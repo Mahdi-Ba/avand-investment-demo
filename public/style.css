@@ -302,3 +302,20 @@ input:focus-visible {
     font-size: 28px;
   }
 }
+
+select {
+  width: 100%;
+  background: #fff;
+  border: 1px solid #bdcabc;
+  border-radius: 3px;
+  padding: 12px;
+  font: inherit;
+  color: #173d35;
+}
+select:focus-visible {
+  outline: 3px solid #b58a2b;
+  outline-offset: 3px;
+}
+[hidden] {
+  display: none !important;
+}

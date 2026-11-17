@@ -45,6 +45,23 @@ async function details(id) {
   const o = await api("/orders/" + id);
   $("details").textContent = JSON.stringify(o, null, 2);
   $("orderState").textContent = o.message;
+  $("resolveVerification").hidden = o.status !== "verification_failed";
+  $("paymentState").textContent = o.payment
+    ? (o.payment.status === "paid"
+        ? "درگاه: وجه کسر شده"
+        : "درگاه: پرداخت انجام نشده") +
+      " / " +
+      (o.payment.verification_status === "rejected"
+        ? "تأیید نهایی: ناموفق"
+        : "تأیید نهایی: موفق")
+    : "";
+  for (const button of document.querySelectorAll("[data-mode]"))
+    button.disabled = !(
+      o.funding_source === "gateway" &&
+      ["buy", "topup"].includes(o.kind) &&
+      ["awaiting_payment", "payment_pending"].includes(o.status) &&
+      !o.payment
+    );
 }
 async function refresh() {
   if (refreshing) return;
@@ -53,14 +70,17 @@ async function refresh() {
     const [b, orders, p, s] = await Promise.all([
       api("/balances"),
       api("/orders"),
-      api("/price"),
+      api("/price").catch(() => ({ outage: true })),
       api("/support"),
     ]);
-    currentPrice = BigInt(p.price);
+    if (!p.outage) currentPrice = BigInt(p.price);
     $("rials").textContent = number(b.rials);
     $("gold").textContent = grams(b.goldUg);
     $("reserved").textContent = number(b.reservedRials);
-    $("price").textContent = number(p.price);
+    $("price").textContent = p.outage ? "در دسترس نیست" : number(p.price);
+    $("priceFeed").textContent = p.outage
+      ? "قیمت‌دهنده در دسترس نیست؛ موجودی و تاریخچه همچنان قابل مشاهده‌اند."
+      : `قیمت ساختگی هر ۳۰ ثانیه تغییر می‌کند · انتشار: ${new Date(p.publishedAt).toLocaleTimeString("fa-IR")}`;
     $("value").textContent = p.outage
       ? "قیمت در دسترس نیست"
       : number((BigInt(b.goldUg) * currentPrice) / 1000000n);
@@ -69,7 +89,12 @@ async function refresh() {
       const tr = document.createElement("tr");
       for (const text of [
         o.id.slice(0, 8),
-        { buy: "خرید", sell: "فروش", withdraw: "برداشت" }[o.kind],
+        {
+          topup: "شارژ کیف پول",
+          buy: "خرید",
+          sell: "فروش",
+          withdraw: "برداشت",
+        }[o.kind],
         number(o.amount),
         grams(o.gold),
         o.message,
@@ -127,9 +152,20 @@ $("buyForm").onsubmit = (e) => {
       kind: "buy",
       amount: $("buyAmount").value,
       quoteId: lockedQuote.id,
+      fundingSource: $("fundingSource").value,
     });
   });
 };
+$("topupForm").onsubmit = (e) => {
+  e.preventDefault();
+  act(() => order({ kind: "topup", amount: $("topupAmount").value }));
+};
+$("resolveVerification").onclick = () =>
+  act(async () => {
+    if (!selected) throw Error("سفارش را انتخاب کنید.");
+    await api("/mock/payments/" + selected + "/resolve-verification", {});
+    notice("تأیید مجدد در ماک ثبت شد؛ worker سفارش را بررسی می‌کند.");
+  });
 $("sellForm").onsubmit = (e) => {
   e.preventDefault();
   act(async () => {
@@ -155,7 +191,8 @@ document.querySelectorAll("[data-mode]").forEach(
   (button) =>
     (button.onclick = () =>
       act(async () => {
-        if (!selected) throw Error("ابتدا سفارش خرید بسازید.");
+        if (!selected)
+          throw Error("ابتدا درخواست شارژ یا خرید مستقیم با درگاه بسازید.");
         await api("/mock/payments/" + selected, { mode: button.dataset.mode });
         notice("نتیجه در درگاه ماک ثبت شد؛ worker پرداخت را بررسی می‌کند.");
       })),
