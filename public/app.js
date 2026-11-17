@@ -3,6 +3,10 @@ let lockedQuote = null,
   selected = null,
   currentPrice = 0n;
 let refreshing = false;
+let market = null,
+  clockOffset = 0;
+const clockNow = () =>
+  market?.clockOverridden ? Date.parse(market.now) : Date.now() + clockOffset;
 const number = (x) => BigInt(x).toLocaleString("fa-IR");
 function grams(x) {
   const n = BigInt(x);
@@ -46,6 +50,30 @@ async function details(id) {
   $("details").textContent = JSON.stringify(o, null, 2);
   $("orderState").textContent = o.message;
   $("resolveVerification").hidden = o.status !== "verification_failed";
+  $("cancelOrder").hidden = !(
+    o.execution_mode === "queued" &&
+    [
+      "queued",
+      "awaiting_payment",
+      "payment_pending",
+      "verification_failed",
+      "payment_review",
+    ].includes(o.status)
+  );
+  if (
+    o.execution_mode === "queued" &&
+    o.execute_after &&
+    o.status !== "cancelled" &&
+    o.status !== "completed"
+  )
+    $("orderState").textContent =
+      (["awaiting_payment", "payment_pending"].includes(o.status)
+        ? "پس از تأیید پرداخت، ریال برای اجرای سفارش در بازار رزرو می‌شود."
+        : o.message) +
+      " نوبت بازار: " +
+      new Date(o.execute_after).toLocaleString("fa-IR", {
+        timeZone: "Asia/Tehran",
+      });
   $("paymentState").textContent = o.payment
     ? (o.payment.status === "paid"
         ? "درگاه: وجه کسر شده"
@@ -67,23 +95,37 @@ async function refresh() {
   if (refreshing) return;
   refreshing = true;
   try {
-    const [b, orders, p, s] = await Promise.all([
+    const [b, orders, p, s, m] = await Promise.all([
       api("/balances"),
       api("/orders"),
       api("/price").catch(() => ({ outage: true })),
       api("/support"),
+      api("/market"),
     ]);
-    if (!p.outage) currentPrice = BigInt(p.price);
+    market = m;
+    clockOffset = Date.parse(m.now) - Date.now();
+    $("marketState").textContent =
+      (m.clockOverridden ? "ساعت آزمایشی · " : "") +
+      (m.isOpen ? "بازار باز است" : "بازار بسته است") +
+      " · " +
+      new Date(m.now).toLocaleString("fa-IR", { timeZone: "Asia/Tehran" });
+    $("limits").textContent =
+      `باقی‌ماندهٔ سقف امروز / خرید: ${number(m.buyRemaining)} ریال · فروش: ${number(m.sellRemaining)} ریال · بازشدن بعدی: ${new Date(m.nextOpen).toLocaleString("fa-IR", { timeZone: "Asia/Tehran" })}`;
+    if (!p.outage && !p.stale) currentPrice = BigInt(p.price);
     $("rials").textContent = number(b.rials);
     $("gold").textContent = grams(b.goldUg);
     $("reserved").textContent = number(b.reservedRials);
-    $("price").textContent = p.outage ? "در دسترس نیست" : number(p.price);
-    $("priceFeed").textContent = p.outage
-      ? "قیمت‌دهنده در دسترس نیست؛ موجودی و تاریخچه همچنان قابل مشاهده‌اند."
-      : `قیمت ساختگی هر ۳۰ ثانیه تغییر می‌کند · انتشار: ${new Date(p.publishedAt).toLocaleTimeString("fa-IR")}`;
-    $("value").textContent = p.outage
-      ? "قیمت در دسترس نیست"
-      : number((BigInt(b.goldUg) * currentPrice) / 1000000n);
+    $("reservedGold").textContent = grams(b.reservedGoldUg);
+    $("price").textContent =
+      p.outage || p.stale ? "قیمت معتبر در دسترس نیست" : number(p.price);
+    $("priceFeed").textContent =
+      p.outage || p.stale
+        ? "قیمت‌دهنده در دسترس نیست؛ موجودی و تاریخچه همچنان قابل مشاهده‌اند."
+        : `قیمت ماک: ${m.isOpen ? "هر ۳۰ ثانیه" : "هر ۵ دقیقه"} · انتشار: ${new Date(p.publishedAt).toLocaleTimeString("fa-IR", { timeZone: "Asia/Tehran" })}`;
+    $("value").textContent =
+      p.outage || p.stale
+        ? "قیمت در دسترس نیست"
+        : number((BigInt(b.goldUg) * currentPrice) / 1000000n);
     $("orders").replaceChildren();
     for (const o of orders) {
       const tr = document.createElement("tr");
@@ -95,7 +137,8 @@ async function refresh() {
           sell: "فروش",
           withdraw: "برداشت",
         }[o.kind],
-        number(o.amount),
+        (o.kind === "sell" && o.status === "queued" ? "تخمینی: " : "") +
+          number(o.amount),
         grams(o.gold),
         o.message,
       ]) {
@@ -132,7 +175,7 @@ $("getQuote").onclick = () =>
   act(async () => {
     lockedQuote = await api("/quotes", {});
     $("locked").textContent = number(lockedQuote.price) + " ریال";
-    notice("قیمت برای ۶۰ ثانیه قفل شد.");
+    notice("قیمت تا پایان شمارش معکوس قفل شد.");
   });
 const pendingKeys = new Map();
 async function order(body) {
@@ -147,11 +190,17 @@ async function order(body) {
 $("buyForm").onsubmit = (e) => {
   e.preventDefault();
   act(async () => {
-    if (!lockedQuote) throw Error("ابتدا قیمت بگیرید.");
+    const amount = $("buyAmount").value;
+    const exceeds =
+      market &&
+      !market.isOpen &&
+      /^\d+$/.test(amount) &&
+      BigInt(amount) > BigInt(market.buyRemaining);
+    if (!lockedQuote && !exceeds) throw Error("ابتدا قیمت بگیرید.");
     await order({
       kind: "buy",
-      amount: $("buyAmount").value,
-      quoteId: lockedQuote.id,
+      amount,
+      ...(!exceeds && lockedQuote ? { quoteId: lockedQuote.id } : {}),
       fundingSource: $("fundingSource").value,
     });
   });
@@ -197,6 +246,35 @@ document.querySelectorAll("[data-mode]").forEach(
         notice("نتیجه در درگاه ماک ثبت شد؛ worker پرداخت را بررسی می‌کند.");
       })),
 );
+$("cancelOrder").onclick = () =>
+  act(async () => {
+    await api("/orders/" + selected + "/cancel", {});
+    notice("سفارش لغو و رزرو دارایی آزاد شد.");
+  });
+$("marketForm").onsubmit = (e) => {
+  e.preventDefault();
+  act(async () => {
+    await api("/mock/market", { clock: $("mockClock").value });
+    lockedQuote = null;
+    notice("ساعت ماک تغییر کرد؛ برای معاملهٔ فوری قیمت تازه بگیرید.");
+  });
+};
+$("realClock").onclick = () =>
+  act(async () => {
+    await api("/mock/market", { clock: null, pauseFeed: false });
+    $("pauseFeed").checked = false;
+    lockedQuote = null;
+    notice("ساعت واقعی و جریان عادی قیمت فعال شدند.");
+  });
+$("pauseFeed").onchange = () =>
+  act(() => api("/mock/market", { pauseFeed: $("pauseFeed").checked }));
+$("processQueue").onclick = () =>
+  act(async () => {
+    await api("/support/process-queue", {});
+    notice(
+      "سفارش‌های آماده برای پردازش بررسی شدند؛ worker صف را خودکار هم بررسی می‌کند.",
+    );
+  });
 $("lookupForm").onsubmit = (e) => {
   e.preventDefault();
   act(() => details($("lookup").value));
@@ -218,7 +296,7 @@ setInterval(() => {
   if (lockedQuote) {
     const remaining = Math.max(
       0,
-      Math.ceil((new Date(lockedQuote.expires_at) - Date.now()) / 1000),
+      Math.ceil((new Date(lockedQuote.expires_at) - clockNow()) / 1000),
     );
     $("countdown").textContent = remaining
       ? `اعتبار باقی‌مانده: ${remaining} ثانیه`

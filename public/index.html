@@ -37,9 +37,22 @@
         </article>
       </section>
       <p class="subtle">
-        مبلغ رزروشده برای برداشت: <span id="reserved">۰</span> ریال
+        ریال رزروشده برای برداشت و صف: <span id="reserved">۰</span> ریال
       </p>
+      <section class="panel market-summary">
+        <h2>وضعیت بازار</h2>
+        <p id="marketState">در حال دریافت ساعت بازار…</p>
+        <p id="limits" class="subtle"></p>
+        <p class="subtle">
+          شنبه تا چهارشنبه، ۰۹:۰۰ تا ۱۵:۰۰ تهران · سقف خارج ساعات بازار: ۵۰
+          میلیون تومان برای خرید و فروش، جداگانه. سفارش مازاد کامل صف می‌شود و
+          دارایی آن رزرو می‌ماند.
+        </p>
+      </section>
       <p class="subtle" id="priceFeed">قیمت ساختگی هر ۳۰ ثانیه تغییر می‌کند.</p>
+      <p class="subtle">
+        طلای رزروشده برای سفارش‌های صف‌شده: <span id="reservedGold">۰</span> گرم
+      </p>
       <section class="workspace" id="trade">
         <article class="panel">
           <div class="section-label">۰۱ / معامله</div>
@@ -104,6 +117,9 @@
             تأیید مجدد درگاه ماک / رفع مغایرت
           </button>
           <p id="paymentState" class="subtle"></p>
+          <button id="cancelOrder" class="secondary" hidden>
+            لغو سفارش صف‌شده و آزادسازی دارایی
+          </button>
           <div id="orderState" class="state">
             وضعیت سفارش اینجا نمایش داده می‌شود.
           </div>
@@ -180,6 +196,32 @@
           مدار API و snapshot مستقل هر worker نمایش داده می‌شوند؛ snapshot
           worker هر ۵ ثانیه تازه می‌شود.
         </p>
+        <details class="mock-market">
+          <summary>کنترل ساعت و وقفهٔ قیمت در دمو</summary>
+          <p class="subtle">
+            این کنترل‌ها فقط ساعت ماک مشترک API و worker را تغییر می‌دهند؛ ساعت
+            دستگاه تغییر نمی‌کند. نمونهٔ بسته: ۲۰:۰۰؛ نمونهٔ بازشدن بعدی: فردا
+            ۰۹:۰۰ با منطقهٔ زمانی +03:30.
+          </p>
+          <form id="marketForm">
+            <label for="mockClock">زمان آزمایشی با منطقهٔ زمانی صریح</label
+            ><input
+              id="mockClock"
+              dir="ltr"
+              value="2026-11-17T20:00:00+03:30"
+              required
+            /><button class="secondary">اعمال ساعت آزمایشی</button>
+          </form>
+          <div class="support-tools">
+            <button id="realClock" class="secondary">
+              بازگشت به ساعت واقعی</button
+            ><button id="processQueue" class="secondary">بررسی صف بازار</button
+            ><label
+              ><input type="checkbox" id="pauseFeed" /> وقفهٔ ۱۵ دقیقه‌ای قیمت
+              ماک</label
+            >
+          </div>
+        </details>
         <div class="support-grid">
           <div>
             <h3>مدارها و آخرین تطبیق</h3>

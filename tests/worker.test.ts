@@ -29,10 +29,10 @@ beforeAll(async () => {
     await readFile(new URL("../src/schema.sql", import.meta.url), "utf8"),
   );
   await pool.query(
-    "TRUNCATE events,outbox,entries,journals,gateway_transactions,orders,quotes,reconciliation_reports RESTART IDENTITY CASCADE",
+    "TRUNCATE events,outbox,entries,journals,gateway_transactions,orders,quotes,reconciliation_reports,daily_limits,opening_prices,price_interruptions RESTART IDENTITY CASCADE",
   );
   await pool.query(
-    "UPDATE mock_settings SET price_outage=false,gateway_outage=false,price=100000000,price_epoch=now() WHERE id=1",
+    "UPDATE mock_settings SET price_outage=false,gateway_outage=false,price=100000000,price_epoch='2026-11-17T06:00:00Z',clock_override='2026-11-17T06:00:00Z',price_pause_started_at=NULL,price_pause_until=NULL,price_outage_started_at=NULL,price_resumed_at=NULL WHERE id=1",
   );
   worker = spawn(process.execPath, ["--import", "tsx", "src/worker.ts"], {
     env: { ...process.env, AMQP_QUEUE: queue },
@@ -200,4 +200,69 @@ it("async charged/verify-rejected top-up waits for explicit resolution without d
   expect(BigInt((await balances()).rials) - BigInt(before.rials)).toBe(
     1000000n,
   );
+});
+
+it("real worker automatically schedules a funded market queue at opening and replay never trades twice", async () => {
+  const t = await place("topup", { amount: "600000000" }, randomUUID());
+  await simulate(t.id, "success");
+  await until(
+    async () =>
+      (await pool.query("SELECT status FROM orders WHERE id=$1", [t.id]))
+        .rows[0].status === "completed",
+  );
+  await pool.query(
+    "UPDATE mock_settings SET clock_override='2026-11-17T20:00:00+03:30' WHERE id=1",
+  );
+  const o = await place(
+    "buy",
+    { amount: "600000000", fundingSource: "wallet" },
+    randomUUID(),
+  );
+  expect(o.status).toBe("queued");
+  expect((await balances()).reservedRials).toBe("600000000");
+  await pool.query(
+    "UPDATE mock_settings SET clock_override='2026-11-18T09:00:00+03:30' WHERE id=1",
+  );
+  await until(
+    async () =>
+      (await pool.query("SELECT status FROM orders WHERE id=$1", [o.id]))
+        .rows[0].status === "completed",
+  );
+  expect((await balances()).reservedRials).toBe("0");
+  const job = (
+    await pool.query(
+      "SELECT * FROM outbox WHERE order_id=$1 AND type='execute_queued'",
+      [o.id],
+    )
+  ).rows[0];
+  await until(async () =>
+    Boolean(
+      (
+        await pool.query("SELECT completed_at FROM outbox WHERE id=$1", [
+          job.id,
+        ])
+      ).rows[0].completed_at,
+    ),
+  );
+  await pool.query(
+    "UPDATE outbox SET completed_at=NULL,published_at=NULL,available_at=now() WHERE id=$1",
+    [job.id],
+  );
+  await until(async () =>
+    Boolean(
+      (
+        await pool.query("SELECT completed_at FROM outbox WHERE id=$1", [
+          job.id,
+        ])
+      ).rows[0].completed_at,
+    ),
+  );
+  expect(
+    (
+      await pool.query(
+        "SELECT * FROM journals WHERE order_id=$1 AND purpose='buy'",
+        [o.id],
+      )
+    ).rows,
+  ).toHaveLength(1);
 });

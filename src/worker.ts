@@ -2,7 +2,14 @@ import amqp from "amqplib";
 import { randomUUID } from "node:crypto";
 import { circuits } from "./providers.js";
 import { pool, tx } from "./db.js";
-import { verify, settleWithdrawal, reconcile, event } from "./domain.js";
+import {
+  verify,
+  settleWithdrawal,
+  reconcile,
+  event,
+  scheduleQueued,
+  executeQueued,
+} from "./domain.js";
 const conn = await amqp.connect(
   process.env.AMQP_URL ?? "amqp://avand:avand_local@localhost:5678",
 );
@@ -32,6 +39,7 @@ async function publish() {
       );
       heartbeatAt = Date.now();
     }
+    await scheduleQueued();
     await tx(async (c) => {
       // Uncompleted jobs are republished after a lease, including broker loss. Duplicates are safe.
       const jobs = await c.query(
@@ -76,6 +84,8 @@ await ch.consume(
         if (job.type === "verify") done = await verify(job.order_id);
         else if (job.type === "withdraw") await settleWithdrawal(job.order_id);
         else if (job.type === "reconcile") await reconcile();
+        else if (job.type === "execute_queued")
+          done = await executeQueued(job.order_id);
         else throw Error("Unknown job type");
         if (done)
           await pool.query("UPDATE outbox SET completed_at=now() WHERE id=$1", [

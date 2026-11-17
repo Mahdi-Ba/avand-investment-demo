@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
 import staticFiles from "@fastify/static";
 import { fileURLToPath } from "node:url";
@@ -13,8 +14,11 @@ import {
   messages,
   enqueue,
   uuid,
+  cancelOrder,
+  scheduleQueued,
   Problem,
 } from "./domain.js";
+import { businessNow, marketStatus } from "./market.js";
 import { circuits } from "./providers.js";
 export function app() {
   const api = Fastify({ logger: true, bodyLimit: 16384 });
@@ -36,6 +40,60 @@ export function app() {
   api.get("/api/balances", balances);
   api.post("/api/quotes", quote);
   api.get("/api/price", currentPrice);
+  api.get("/api/market", marketStatus);
+  api.post<{ Params: { id: string } }>("/api/orders/:id/cancel", async (req) =>
+    cancelOrder(req.params.id),
+  );
+  api.post("/api/support/process-queue", async () => {
+    await scheduleQueued();
+    return { accepted: true };
+  });
+  api.post<{ Body: { clock?: string | null; pauseFeed?: boolean } }>(
+    "/api/mock/market",
+    async (req) => {
+      const body = req.body ?? {};
+      if (
+        body.clock !== undefined &&
+        body.clock !== null &&
+        (typeof body.clock !== "string" ||
+          !/(Z|[+-]\d{2}:\d{2})$/.test(body.clock) ||
+          !Number.isFinite(Date.parse(body.clock)))
+      )
+        throw new Problem(
+          400,
+          "clock must be an ISO timestamp with an explicit timezone, or null",
+        );
+      if (body.pauseFeed !== undefined && typeof body.pauseFeed !== "boolean")
+        throw new Problem(400, "pauseFeed must be boolean");
+      await tx(async (c) => {
+        if (body.clock !== undefined)
+          await c.query(
+            "UPDATE mock_settings SET clock_override=$1 WHERE id=1",
+            [body.clock],
+          );
+        if (body.pauseFeed !== undefined) {
+          const now = await businessNow(c);
+          await c.query(
+            "UPDATE price_interruptions SET ends_at=greatest(started_at,$1) WHERE kind='pause' AND ends_at>$1",
+            [now],
+          );
+          if (body.pauseFeed)
+            await c.query(
+              "INSERT INTO price_interruptions(id,kind,started_at,ends_at) VALUES($1,'pause',$2,$3)",
+              [randomUUID(), now, new Date(now.getTime() + 900000)],
+            );
+          await c.query(
+            "UPDATE mock_settings SET price_pause_started_at=$1,price_pause_until=$2 WHERE id=1",
+            [
+              body.pauseFeed ? now : null,
+              body.pauseFeed ? new Date(now.getTime() + 900000) : null,
+            ],
+          );
+        }
+      });
+      return marketStatus();
+    },
+  );
   api.post<{
     Body: {
       kind: "topup" | "buy" | "sell" | "withdraw";
@@ -152,10 +210,28 @@ export function app() {
         typeof req.body?.gatewayOutage !== "boolean"
       )
         throw new Problem(400, "Boolean outage flags required");
-      await pool.query(
-        "UPDATE mock_settings SET price_outage=$1,gateway_outage=$2 WHERE id=1",
-        [req.body.priceOutage, req.body.gatewayOutage],
-      );
+      await tx(async (c) => {
+        const now = await businessNow(c);
+        const previous = (
+          await c.query(
+            "SELECT price_outage FROM mock_settings WHERE id=1 FOR UPDATE",
+          )
+        ).rows[0];
+        if (req.body.priceOutage && !previous.price_outage)
+          await c.query(
+            "INSERT INTO price_interruptions(id,kind,started_at) VALUES($1,'outage',$2)",
+            [randomUUID(), now],
+          );
+        if (!req.body.priceOutage && previous.price_outage)
+          await c.query(
+            "UPDATE price_interruptions SET ends_at=greatest(started_at,$1) WHERE kind='outage' AND ends_at IS NULL",
+            [now],
+          );
+        await c.query(
+          "UPDATE mock_settings SET price_outage_started_at=CASE WHEN $1 AND NOT price_outage THEN $3 ELSE price_outage_started_at END,price_resumed_at=CASE WHEN NOT $1 AND price_outage THEN $3 ELSE price_resumed_at END,price_outage=$1,gateway_outage=$2 WHERE id=1",
+          [req.body.priceOutage, req.body.gatewayOutage, now],
+        );
+      });
       return { ok: true };
     },
   );

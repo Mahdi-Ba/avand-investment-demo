@@ -319,3 +319,21 @@ select:focus-visible {
 [hidden] {
   display: none !important;
 }
+
+.market-summary {
+  margin-top: 22px;
+}
+.market-summary h2 {
+  margin-bottom: 6px;
+}
+.mock-market {
+  margin: 18px 0;
+  padding: 16px;
+  background: #edf0e8;
+}
+.mock-market summary {
+  cursor: pointer;
+}
+.mock-market form {
+  max-width: 540px;
+}

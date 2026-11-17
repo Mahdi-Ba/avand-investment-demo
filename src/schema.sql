@@ -55,3 +55,27 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS funding_source text NOT NULL DEFAULT
 ALTER TABLE gateway_transactions ADD COLUMN IF NOT EXISTS verification_status text NOT NULL DEFAULT 'verified' CHECK(verification_status IN ('verified','rejected'));
 ALTER TABLE quotes ADD COLUMN IF NOT EXISTS provider_published_at timestamptz;
 ALTER TABLE mock_settings ADD COLUMN IF NOT EXISTS price_epoch timestamptz NOT NULL DEFAULT now();
+
+-- Part 5: daily risk reservations and cancellable, asset-backed market orders.
+ALTER TABLE mock_settings ADD COLUMN IF NOT EXISTS clock_override timestamptz;
+ALTER TABLE mock_settings ADD COLUMN IF NOT EXISTS price_pause_started_at timestamptz;
+ALTER TABLE mock_settings ADD COLUMN IF NOT EXISTS price_pause_until timestamptz;
+ALTER TABLE mock_settings ADD COLUMN IF NOT EXISTS price_outage_started_at timestamptz;
+ALTER TABLE mock_settings ADD COLUMN IF NOT EXISTS price_resumed_at timestamptz;
+CREATE TABLE IF NOT EXISTS daily_limits (
+ wallet_id text NOT NULL REFERENCES wallets, day date NOT NULL, direction text NOT NULL CHECK(direction IN ('buy','sell')),
+ used bigint NOT NULL CHECK(used>=0 AND used<=500000000), PRIMARY KEY(wallet_id,day,direction)
+);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS execution_mode text NOT NULL DEFAULT 'instant' CHECK(execution_mode IN ('instant','queued'));
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS execute_after timestamptz;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS queue_reserved boolean NOT NULL DEFAULT false;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS cap_day date;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS cap_amount bigint NOT NULL DEFAULT 0 CHECK(cap_amount>=0);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS execution_price bigint;
+CREATE INDEX IF NOT EXISTS queued_orders_due ON orders(execute_after) WHERE status='queued';
+CREATE UNIQUE INDEX IF NOT EXISTS single_live_execution ON outbox(order_id,type) WHERE type='execute_queued' AND completed_at IS NULL AND dead=false;
+CREATE TABLE IF NOT EXISTS opening_prices (session_open timestamptz PRIMARY KEY, price bigint NOT NULL CHECK(price>0), published_at timestamptz NOT NULL);
+CREATE TABLE IF NOT EXISTS price_interruptions (
+ id uuid PRIMARY KEY, kind text NOT NULL CHECK(kind IN ('pause','outage')), started_at timestamptz NOT NULL, ends_at timestamptz,
+ CHECK(ends_at IS NULL OR ends_at>=started_at)
+);

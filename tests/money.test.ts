@@ -39,10 +39,10 @@ beforeAll(async () => {
 });
 beforeEach(async () => {
   await pool.query(
-    "TRUNCATE events,outbox,entries,journals,gateway_transactions,orders,quotes,reconciliation_reports RESTART IDENTITY CASCADE",
+    "TRUNCATE events,outbox,entries,journals,gateway_transactions,orders,quotes,reconciliation_reports,daily_limits,opening_prices,price_interruptions RESTART IDENTITY CASCADE",
   );
   await pool.query(
-    "UPDATE mock_settings SET price_outage=false,gateway_outage=false,price=100000000,price_epoch=now() WHERE id=1",
+    "UPDATE mock_settings SET price_outage=false,gateway_outage=false,price=100000000,price_epoch='2026-11-17T06:00:00Z',clock_override='2026-11-17T06:00:00Z',price_pause_started_at=NULL,price_pause_until=NULL,price_outage_started_at=NULL,price_resumed_at=NULL WHERE id=1",
   );
   priceBreaker.close();
 });
@@ -142,7 +142,7 @@ describe("Seven required money scenarios (real PostgreSQL)", () => {
   it("4: money paid after price expiry is credited as rials without gold", async () => {
     const o = await buy();
     await pool.query(
-      "UPDATE quotes SET expires_at=now()-interval '1 second' WHERE id=$1",
+      "UPDATE quotes SET expires_at=(SELECT clock_override FROM mock_settings WHERE id=1)-interval '1 second' WHERE id=$1",
       [o.quote_id],
     );
     await simulate(o.id, "late");
@@ -455,7 +455,7 @@ describe("Wallet funding and purchases", () => {
     await topup();
     const before = await balances();
     await pool.query(
-      "UPDATE quotes SET expires_at=now()-interval '1 second' WHERE id=$1",
+      "UPDATE quotes SET expires_at=(SELECT clock_override FROM mock_settings WHERE id=1)-interval '1 second' WHERE id=$1",
       [q.id],
     );
     await expect(
@@ -527,7 +527,7 @@ describe("Thirty-second price feed", () => {
     await topup();
     const locked = await quote();
     await pool.query(
-      "UPDATE mock_settings SET price_epoch=now()-interval '31 seconds' WHERE id=1",
+      "UPDATE mock_settings SET price_epoch=clock_override-interval '31 seconds' WHERE id=1",
     );
     const fresh = await quote();
     expect(locked.price).toBe("100000000");
