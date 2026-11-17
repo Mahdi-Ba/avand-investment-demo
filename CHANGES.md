@@ -88,4 +88,11 @@ History now uses a bounded keyset cursor and the interface supports page navigat
 
 Validation: **61 tests pass**, TypeScript passes, and the browser demo completed successfully. New tests cover refund races/outages, independent settlement mismatches and recovery, bank retry, equal-timestamp pagination beyond 100 orders, daily scheduler races, statement omission and actual ledger invariants.
 
-Expanded architecture covers accounting accounts, refund/correction workflow, sample reconciliation closure, delayed fund settlement, card payment/liquidity examples and a week-by-week delivery plan. Production authorization, physical treasury inventory, bank settlement files and dual-approval discrepancy resolution remain explicit launch work. Personal work-history examples must come from the candidate; no past employment experience is invented.
+Expanded architecture covers accounting accounts, refund/correction workflow, sample reconciliation closure, delayed fund settlement, card payment/liquidity examples and a week-by-week delivery plan. Production authorization, physical treasury inventory, bank settlement files and dual-approval discrepancy resolution remain explicit launch work. Confirmed professional experience is now documented in the architecture; confidential throughput figures and unconfirmed historical incidents are not asserted.
+
+
+## 8. Experience context and in-app guide
+
+Architecture now includes the candidate-confirmed eight-person team leadership, banking/lending and telecom/billing projects, domestic and international integrations, and monitoring practice. Recommendations for this product are distinguished from past implementation claims; confidential transaction volumes are omitted.
+
+Added a dependency-free Persian in-app walkthrough with 15 steps, section highlighting, automatic scrolling, previous/next/close controls and keyboard support. A collapsed demo-clock panel opens for its explanation and returns to its original state. The walkthrough performs no API writes. Browser verification traversed all 15 steps and checked previous, close, restart and panel restoration. JavaScript syntax and whitespace checks passed; financial code is unchanged.

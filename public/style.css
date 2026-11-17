@@ -337,3 +337,96 @@ select:focus-visible {
 .mock-market form {
   max-width: 540px;
 }
+
+/* In-app guided walkthrough */
+.tour-dialog {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #173d35;
+  pointer-events: none;
+}
+.tour-dialog::backdrop {
+  background: rgb(12 35 30 / 22%);
+}
+.tour-card {
+  position: absolute;
+  bottom: 16px;
+  right: 16px;
+  width: min(440px, calc(100% - 32px));
+  max-height: 48dvh;
+  overflow: auto;
+  padding: 20px;
+  box-sizing: border-box;
+  background: #fffdf6;
+  border: 2px solid #173d35;
+  border-radius: 12px;
+  box-shadow: 0 8px 35px #0003;
+  pointer-events: auto;
+}
+.tour-card h2 {
+  margin: 12px 0 6px;
+  font-size: 1.2rem;
+}
+.tour-card p {
+  line-height: 1.9;
+  margin: 0 0 12px;
+}
+.tour-heading,
+.tour-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.tour-heading button {
+  padding: 6px 10px;
+}
+.tour-card small {
+  display: block;
+  margin-top: 10px;
+}
+.tour-highlight {
+  position: fixed;
+  border: 3px solid #b58a2b;
+  border-radius: 6px;
+  box-sizing: border-box;
+  box-shadow: 0 0 0 3px #fff;
+  pointer-events: none;
+}
+body:has(.tour-dialog[open])
+  :is(
+    section,
+    form,
+    .quote,
+    .scenarios,
+    .state,
+    details,
+    .support-tools,
+    .support-grid,
+    a
+  ) {
+  scroll-margin-top: 16px;
+}
+#startTour {
+  white-space: nowrap;
+}
+@media (max-width: 600px) {
+  .tour-card {
+    bottom: 8px;
+    right: 8px;
+    width: calc(100% - 16px);
+    padding: 14px;
+    max-height: 46dvh;
+  }
+  header nav {
+    flex-wrap: wrap;
+  }
+}
