@@ -1,0 +1,37 @@
+{
+  "name": "avand",
+  "version": "1.0.0",
+  "description": "Confidential Avand local investment sandbox",
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  },
+  "scripts": {
+    "start": "tsx src/server.ts",
+    "worker": "tsx src/worker.ts",
+    "migrate": "tsx src/migrate.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --maxWorkers=1"
+  },
+  "keywords": [],
+  "author": "",
+  "dependencies": {
+    "@fastify/static": "^10.1.11",
+    "amqplib": "^2.4.0",
+    "fastify": "^5.12.8",
+    "opossum": "^10.0.0",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@types/amqplib": "^0.10.8",
+    "@types/node": "^26.6.6",
+    "@types/opossum": "^8.1.9",
+    "@types/pg": "^8.23.1",
+    "prettier": "^3.10.1",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  },
+  "type": "module",
+  "private": true
+}

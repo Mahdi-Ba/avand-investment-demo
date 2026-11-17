@@ -1,0 +1,48 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: avand
+      POSTGRES_PASSWORD: avand_local
+      POSTGRES_DB: avand
+    ports: ["127.0.0.1:55439:5432"]
+    volumes: ["postgres_data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U avand"]
+      interval: 2s
+      retries: 30
+  rabbit:
+    image: rabbitmq:4-management-alpine
+    ports: ["127.0.0.1:5678:5672", "127.0.0.1:15678:15672"]
+    environment:
+      RABBITMQ_DEFAULT_USER: avand
+      RABBITMQ_DEFAULT_PASS: avand_local
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      retries: 30
+  migrate:
+    build: .
+    command: ["npm", "run", "migrate"]
+    environment: &env
+      DATABASE_URL: postgres://avand:avand_local@db:5432/avand
+      AMQP_URL: amqp://avand:avand_local@rabbit:5672
+    depends_on:
+      db: { condition: service_healthy }
+  api:
+    build: .
+    command: ["npm", "start"]
+    ports: ["127.0.0.1:3000:3000"]
+    environment: *env
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+  worker:
+    build: .
+    command: ["npm", "run", "worker"]
+    environment: *env
+    restart: on-failure
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      rabbit: { condition: service_healthy }
+volumes:
+  postgres_data:

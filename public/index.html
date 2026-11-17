@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>آوند | آزمایشگاه معاملات طلا</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <header>
+      <a class="brand" href="/">آوند<span>AVAND / SANDBOX</span></a>
+      <nav>
+        <a href="#trade">معامله</a><a href="#history">تاریخچه</a
+        ><a href="#support">پشتیبانی</a>
+      </nav>
+      <span class="badge">محیط آزمایشی · پول واقعی نیست</span>
+    </header>
+    <main>
+      <section class="intro">
+        <div class="eyebrow">کیف پول سرمایه‌گذاری</div>
+        <h1>طلای شما، با حساب روشن.</h1>
+        <p>خرید و فروش شبیه‌سازی‌شده، با ثبت قابل پیگیری هر تراکنش.</p>
+      </section>
+      <div id="notice" role="status" aria-live="polite"></div>
+      <section class="balances" aria-label="موجودی">
+        <article>
+          <span>موجودی ریالی قابل استفاده</span><strong id="rials">—</strong
+          ><small>ریال</small>
+        </article>
+        <article class="gold">
+          <span>موجودی طلا</span><strong id="gold">—</strong
+          ><small>گرم طلا</small>
+        </article>
+        <article>
+          <span>ارزش تقریبی طلا</span><strong id="value">—</strong
+          ><small>ریال · قیمت ساختگی <b id="price">—</b></small>
+        </article>
+      </section>
+      <p class="subtle">
+        مبلغ رزروشده برای برداشت: <span id="reserved">۰</span> ریال
+      </p>
+      <section class="workspace" id="trade">
+        <article class="panel">
+          <div class="section-label">۰۱ / معامله</div>
+          <h2>خرید و فروش طلا</h2>
+          <div class="quote">
+            <span>قیمت قفل‌شدهٔ هر گرم</span
+            ><strong id="locked">قیمت بگیرید</strong
+            ><span id="countdown">اعتبار قیمت: ۶۰ ثانیه</span
+            ><button id="getQuote" class="secondary">دریافت قیمت تازه</button>
+          </div>
+          <form id="buyForm">
+            <label for="buyAmount">مبلغ خرید به ریال · شامل کارمزد ۱٪</label
+            ><input
+              id="buyAmount"
+              value="10000000"
+              inputmode="numeric"
+              pattern="[0-9]+"
+              required
+            /><button>خرید طلا</button>
+          </form>
+          <form id="sellForm">
+            <label for="sellGrams">مقدار فروش به گرم · کارمزد ۱٪</label
+            ><input
+              id="sellGrams"
+              value="0.01"
+              inputmode="decimal"
+              required
+            /><button class="secondary">فروش به کیف پول</button>
+          </form>
+        </article>
+        <article class="panel">
+          <div class="section-label">۰۲ / درگاه شبیه‌سازی‌شده</div>
+          <h2>یک پرداخت، چند سناریو</h2>
+          <p class="subtle">
+            ابتدا سفارش خرید بسازید؛ سپس نتیجهٔ پرداخت را انتخاب کنید. هر سفارش
+            فقط یک پرداخت آزمایشی دارد.
+          </p>
+          <p id="selectedOrder" class="mono">سفارشی انتخاب نشده</p>
+          <div class="scenarios">
+            <button data-mode="success">پرداخت موفق</button
+            ><button data-mode="failure" class="secondary">پرداخت ناموفق</button
+            ><button data-mode="duplicate" class="secondary">
+              callback تکراری</button
+            ><button data-mode="late" class="secondary">
+              پرداخت پس از انقضا</button
+            ><button data-mode="missing" class="secondary">
+              موفق، بدون callback</button
+            ><button data-mode="failed_verify" class="secondary">
+              verify ناموفق
+            </button>
+          </div>
+          <p class="subtle">
+            «دیررس» را پس از پایان شمارش معکوس بزنید. وجه پرداخت دیررس به کیف
+            پول می‌رود؛ برگشت بانکی نیست.
+          </p>
+          <div id="orderState" class="state">
+            وضعیت سفارش اینجا نمایش داده می‌شود.
+          </div>
+        </article>
+        <article class="panel">
+          <div class="section-label">۰۳ / برداشت</div>
+          <h2>انتقال به شبا</h2>
+          <p class="subtle">
+            مبلغ ابتدا رزرو می‌شود و worker تسویهٔ بانک را شبیه‌سازی می‌کند.
+          </p>
+          <form id="withdrawForm">
+            <label for="withdrawAmount">مبلغ به ریال</label
+            ><input
+              id="withdrawAmount"
+              value="100000"
+              inputmode="numeric"
+              required
+            /><label for="sheba">شماره شبا</label
+            ><input
+              id="sheba"
+              value="IR820540102680020817909002"
+              dir="ltr"
+              required
+            /><button class="secondary">درخواست برداشت آزمایشی</button>
+          </form>
+        </article>
+      </section>
+      <section class="panel" id="history">
+        <div class="section-label">دفتر فعالیت</div>
+        <h2>تاریخچهٔ تراکنش‌ها</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>شناسه</th>
+                <th>عملیات</th>
+                <th>مبلغ / ریال</th>
+                <th>طلا / گرم</th>
+                <th>وضعیت</th>
+                <th>جزئیات</th>
+              </tr>
+            </thead>
+            <tbody id="orders"></tbody>
+          </table>
+        </div>
+      </section>
+      <section class="panel" id="support">
+        <div class="section-label">فضای پشتیبانی / فقط دمو</div>
+        <h2>هر تغییر، یک رد قابل پیگیری</h2>
+        <div class="support-tools">
+          <button id="reconcile" class="secondary">اجرای تطبیق در صف</button
+          ><label
+            ><input type="checkbox" id="priceOutage" /> قطعی قیمت‌دهنده</label
+          ><label
+            ><input type="checkbox" id="gatewayOutage" /> قطعی درگاه</label
+          >
+        </div>
+        <p class="subtle">
+          Circuit Breaker پس از خطاهای متوالی باز می‌شود. وضعیت نمایش‌داده‌شده
+          متعلق به API است؛ مدار درگاه در worker مستقل است.
+        </p>
+        <div class="support-grid">
+          <div>
+            <h3>مدارها و آخرین تطبیق</h3>
+            <pre id="supportData" dir="ltr"></pre>
+          </div>
+          <div>
+            <h3>رویدادها و اسناد سفارش</h3>
+            <form id="lookupForm">
+              <label for="lookup">شناسهٔ سفارش</label
+              ><input
+                id="lookup"
+                dir="ltr"
+                placeholder="UUID سفارش"
+                required
+              /><button class="secondary">مشاهدهٔ جزئیات</button>
+            </form>
+            <pre id="details" dir="ltr">یک سفارش از تاریخچه انتخاب کنید.</pre>
+          </div>
+        </div>
+      </section>
+      <footer>
+        آوند / MVP · دارایی‌ها و قیمت‌ها ساختگی‌اند · بدون اتصال به بانک
+      </footer>
+    </main>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
